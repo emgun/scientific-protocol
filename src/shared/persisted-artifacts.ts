@@ -16,6 +16,9 @@ import {
   parseIpfsUrl,
 } from "./ipfs.js";
 import { readEnvValue } from "./secrets.js";
+import { sha256Hex } from "./sha256.js";
+
+export { sha256Hex } from "./sha256.js";
 
 export const DEFAULT_ARTIFACT_STORE_ROOT = path.resolve(process.cwd(), "ops", "artifact-store");
 
@@ -336,10 +339,6 @@ export function findArtifactIpfsReplicaTarget(
   return resolveArtifactPersistenceOptions(options).ipfsReplicaTargets.find(
     (target) => target.replicaKey === replicaKey,
   );
-}
-
-export function sha256Hex(content: ArtifactContent): string {
-  return createHash("sha256").update(toBuffer(content)).digest("hex");
 }
 
 export function resolveArtifactPersistenceOptions(

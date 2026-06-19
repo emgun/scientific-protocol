@@ -2,7 +2,7 @@ import { getBytes, type Signer, verifyMessage } from "ethers";
 import type { Pool, PoolClient } from "pg";
 import { createReadModelPool, DEFAULT_DATABASE_URL, migrateReadModelDb } from "../indexer/store.js";
 import { normalizePagination } from "./pagination.js";
-import { sha256Hex } from "./persisted-artifacts.js";
+import { sha256Hex } from "./sha256.js";
 
 type Queryable = Pool | PoolClient;
 

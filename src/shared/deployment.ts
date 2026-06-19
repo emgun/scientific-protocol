@@ -1,7 +1,6 @@
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { isAddress } from "ethers";
-import { createDefaultGcsClient, type GcsLikeClient, isGcsUrl, parseGcsUrl } from "./gcs.js";
 import { readEnvValue } from "./secrets.js";
 
 export type DeploymentAddresses = {
@@ -44,6 +43,43 @@ type DeploymentFileOptions = {
   env?: NodeJS.ProcessEnv;
   gcsClient?: GcsLikeClient;
 };
+
+type GcsObjectLocator = {
+  bucket: string;
+  key: string;
+};
+
+type GcsLikeClient = {
+  saveObject(
+    input: GcsObjectLocator & {
+      body?: string | Uint8Array;
+      contentType: string;
+      metadata?: Record<string, string>;
+    },
+  ): Promise<void>;
+  readObject(input: GcsObjectLocator): Promise<Buffer>;
+  objectExists(input: GcsObjectLocator): Promise<boolean>;
+};
+
+function isGcsUrl(value: string): boolean {
+  return value.startsWith("gs://");
+}
+
+function parseGcsUrl(value: string): GcsObjectLocator {
+  const match = value.match(/^gs:\/\/([^/]+)\/(.+)$/u);
+  if (!match) {
+    throw new Error(`invalid gcs path: ${value}`);
+  }
+  return { bucket: match[1], key: match[2] };
+}
+
+async function resolveDeploymentGcsClient(options: DeploymentFileOptions): Promise<GcsLikeClient> {
+  if (options.gcsClient) {
+    return options.gcsClient;
+  }
+  const { createDefaultGcsClient } = await import("./gcs.js");
+  return createDefaultGcsClient();
+}
 
 const DEPLOYMENT_ADDRESS_KEYS = [
   "accessController",
@@ -143,12 +179,12 @@ export async function deploymentFileExists(
   options: DeploymentFileOptions = {},
 ): Promise<boolean> {
   const env = options.env ?? process.env;
-  const gcsClient = options.gcsClient ?? createDefaultGcsClient();
   const inline = readEnvValue(env, "SP_DEPLOYMENT_JSON");
   if (inline) {
     return true;
   }
   if (isGcsUrl(filePath)) {
+    const gcsClient = await resolveDeploymentGcsClient(options);
     const locator = parseGcsUrl(filePath);
     return gcsClient.objectExists(locator);
   }
@@ -165,12 +201,12 @@ export async function loadDeploymentFile(
   options: DeploymentFileOptions = {},
 ): Promise<DeploymentFile> {
   const env = options.env ?? process.env;
-  const gcsClient = options.gcsClient ?? createDefaultGcsClient();
   const inline = readEnvValue(env, "SP_DEPLOYMENT_JSON");
   if (inline) {
     return parseDeploymentJson(inline, "SP_DEPLOYMENT_JSON");
   }
   if (isGcsUrl(filePath)) {
+    const gcsClient = await resolveDeploymentGcsClient(options);
     const locator = parseGcsUrl(filePath);
     const content = (await gcsClient.readObject(locator)).toString("utf8");
     return parseDeploymentJson(content, filePath);
@@ -183,9 +219,9 @@ export async function saveDeploymentFile(
   filePath = DEFAULT_DEPLOYMENT_PATH,
   options: DeploymentFileOptions = {},
 ): Promise<void> {
-  const gcsClient = options.gcsClient ?? createDefaultGcsClient();
   const serialized = `${JSON.stringify(deployment, null, 2)}\n`;
   if (isGcsUrl(filePath)) {
+    const gcsClient = await resolveDeploymentGcsClient(options);
     const locator = parseGcsUrl(filePath);
     await gcsClient.saveObject({
       ...locator,

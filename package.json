@@ -31,24 +31,16 @@
   "files": [
     "src/sdk",
     "src/generated",
-    "src/agents",
-    "src/artifacts",
-    "src/checkpoints",
-    "src/coordinator",
-    "src/demo",
-    "src/governance",
-    "src/indexer",
-    "src/reputation",
-    "src/resolver",
-    "src/review",
-    "src/rewards",
-    "src/shared",
-    "src/sources",
-    "src/submission",
-    "src/work",
-    "src/workers",
+    "src/rewards/types.ts",
+    "src/shared/agent-request-envelope.ts",
+    "src/shared/artifact-storage-attestations.ts",
+    "src/shared/artifact-storage-bundles.ts",
+    "src/shared/artifact-storage-policy.ts",
+    "src/shared/contracts.ts",
+    "src/shared/deployment.ts",
+    "src/shared/secrets.ts",
+    "src/shared/sha256.ts",
     "schemas",
-    "python",
     "README.md"
   ],
   "type": "module",
@@ -80,12 +72,16 @@
     "gas:check": "forge snapshot --check .gas-snapshot"
   },
   "devDependencies": {
+    "@aws-sdk/client-s3": "^3.1011.0",
     "@biomejs/biome": "^2.4.9",
+    "@google-cloud/storage": "^7.19.0",
     "@nomicfoundation/hardhat-ethers": "^4.0.0",
     "@nomicfoundation/hardhat-node-test-runner": "^3.0.11",
+    "@openzeppelin/contracts": "^4.9.6",
     "@types/pg": "^8.11.10",
     "chai": "^5.1.1",
     "hardhat": "^3.1.12",
+    "pdf-parse": "^2.4.5",
     "pg": "^8.13.1",
     "prettier": "^3.8.1",
     "prettier-plugin-solidity": "^2.3.1",
@@ -102,10 +98,6 @@
     "ws": "8.21.0"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1011.0",
-    "@google-cloud/storage": "^7.19.0",
-    "@openzeppelin/contracts": "^4.9.6",
-    "ethers": "^6.13.2",
-    "pdf-parse": "^2.4.5"
+    "ethers": "^6.13.2"
   }
 }
