@@ -1,7 +1,7 @@
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { isAddress } from "ethers";
-import { readEnvValue } from "./secrets.js";
+import { type EnvRecord, readEnvValue } from "./secrets.js";
 
 export type DeploymentAddresses = {
   accessController: string;
@@ -35,12 +35,12 @@ export type DeploymentFile = {
 
 export const DEFAULT_DEPLOYMENT_PATH = path.resolve(process.cwd(), "ops", "local.addresses.json");
 
-export function getDeploymentPath(env: NodeJS.ProcessEnv = process.env): string {
+export function getDeploymentPath(env: EnvRecord = process.env): string {
   return readEnvValue(env, "SP_DEPLOYMENT_PATH") ?? DEFAULT_DEPLOYMENT_PATH;
 }
 
 type DeploymentFileOptions = {
-  env?: NodeJS.ProcessEnv;
+  env?: EnvRecord;
   gcsClient?: GcsLikeClient;
 };
 
@@ -57,7 +57,7 @@ type GcsLikeClient = {
       metadata?: Record<string, string>;
     },
   ): Promise<void>;
-  readObject(input: GcsObjectLocator): Promise<Buffer>;
+  readObject(input: GcsObjectLocator): Promise<string | Uint8Array>;
   objectExists(input: GcsObjectLocator): Promise<boolean>;
 };
 
@@ -77,8 +77,7 @@ async function resolveDeploymentGcsClient(options: DeploymentFileOptions): Promi
   if (options.gcsClient) {
     return options.gcsClient;
   }
-  const { createDefaultGcsClient } = await import("./gcs.js");
-  return createDefaultGcsClient();
+  throw new Error("gs:// deployment paths require DeploymentFileOptions.gcsClient");
 }
 
 const DEPLOYMENT_ADDRESS_KEYS = [
@@ -208,7 +207,8 @@ export async function loadDeploymentFile(
   if (isGcsUrl(filePath)) {
     const gcsClient = await resolveDeploymentGcsClient(options);
     const locator = parseGcsUrl(filePath);
-    const content = (await gcsClient.readObject(locator)).toString("utf8");
+    const object = await gcsClient.readObject(locator);
+    const content = typeof object === "string" ? object : new TextDecoder().decode(object);
     return parseDeploymentJson(content, filePath);
   }
   return parseDeploymentJson(await readFile(filePath, "utf8"), filePath);

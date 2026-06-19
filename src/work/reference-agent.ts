@@ -74,7 +74,7 @@ function itemMatchesCapabilities(item: ClaimWorkItemView, capabilities?: string[
     return true;
   }
   const capabilitySet = new Set(normalized);
-  return (item.policy?.requiredCapabilities ?? []).every((capability) =>
+  return (item.policy?.requiredCapabilities ?? []).every((capability: string) =>
     capabilitySet.has(capability),
   );
 }
@@ -84,7 +84,8 @@ function agentCanAdvanceWorkItem(item: ClaimWorkItemView, agentId?: string): boo
     return true;
   }
   return !item.runs.some(
-    (run) => run.agentId === agentId && (run.status === "completed" || run.status === "running"),
+    (run: { agentId?: string; status?: string }) =>
+      run.agentId === agentId && (run.status === "completed" || run.status === "running"),
   );
 }
 

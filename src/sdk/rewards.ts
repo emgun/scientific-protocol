@@ -1,7 +1,14 @@
 import { type ContractRunner, parseEther } from "ethers";
-import type { ClaimRewardWorkKind } from "../rewards/types.js";
 import { getContract } from "../shared/contracts.js";
 import { DEFAULT_DEPLOYMENT_PATH, loadDeploymentFile } from "../shared/deployment.js";
+
+export type ClaimRewardWorkKind =
+  | "challenge"
+  | "forecast"
+  | "maintenance"
+  | "replication"
+  | "review"
+  | "synthesis";
 
 const CLAIM_REWARD_WORK_KIND_CODES: Record<ClaimRewardWorkKind, number> = {
   challenge: 3,

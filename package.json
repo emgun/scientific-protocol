@@ -19,9 +19,17 @@
     "reputation",
     "solidity"
   ],
+  "main": "./dist/sdk/index.js",
+  "types": "./dist/sdk/index.d.ts",
   "exports": {
-    ".": "./src/sdk/index.ts",
-    "./contracts": "./src/generated/contracts.ts",
+    ".": {
+      "types": "./dist/sdk/index.d.ts",
+      "import": "./dist/sdk/index.js"
+    },
+    "./contracts": {
+      "types": "./dist/generated/contracts.d.ts",
+      "import": "./dist/generated/contracts.js"
+    },
     "./schemas/claim": "./schemas/claim.schema.json",
     "./schemas/replication": "./schemas/replication.schema.json",
     "./schemas/evaluation": "./schemas/evaluation.schema.json",
@@ -29,17 +37,7 @@
     "./schemas/artifact-storage-bundle": "./schemas/artifact-storage-bundle.schema.json"
   },
   "files": [
-    "src/sdk",
-    "src/generated",
-    "src/rewards/types.ts",
-    "src/shared/agent-request-envelope.ts",
-    "src/shared/artifact-storage-attestations.ts",
-    "src/shared/artifact-storage-bundles.ts",
-    "src/shared/artifact-storage-policy.ts",
-    "src/shared/contracts.ts",
-    "src/shared/deployment.ts",
-    "src/shared/secrets.ts",
-    "src/shared/sha256.ts",
+    "dist",
     "schemas",
     "README.md"
   ],
@@ -52,6 +50,8 @@
   },
   "scripts": {
     "build": "bash script/run-with-node22-env.sh hardhat clean && bash script/run-with-node22-env.sh hardhat compile && npm run generate:contracts",
+    "build:package": "npm run build && bash script/run-with-node22-env.sh tsc -p tsconfig.package.json",
+    "prepack": "npm run build:package",
     "lint": "npm run lint:biome && npm run lint:prettier && npm run lint:shell",
     "lint:biome": "bash script/run-with-node22-env.sh npx biome check --diagnostic-level=error --files-ignore-unknown=true src test script hardhat.config.ts package.json tsconfig.json biome.json .prettierrc.json",
     "lint:prettier": "bash script/run-with-node22-env.sh prettier --check .",

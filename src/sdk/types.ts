@@ -1,175 +1,115 @@
-import type { AgentRuntimeEventView } from "../agents/runtime-events.js";
-import type {
-  AgentWebhookDeliveryView,
-  AgentWebhookEventType,
-  AgentWebhookSubscriptionView,
-} from "../agents/webhooks.js";
-import type { AgentWorkSummaryView } from "../agents/work-summary.js";
-import type {
-  ArtifactMaintenanceTaskRunView,
-  ArtifactMaintenanceTaskView,
-  PersistedArtifactAuditView,
-  PersistedArtifactProvenanceView,
-  PersistedArtifactReplicaView,
-  PersistedArtifactView,
-  ReplicationJobRunView,
-  ReplicationJobView,
-} from "../coordinator/store.js";
-import type {
-  DemoClaimInput,
-  DemoClaimResult,
-  DemoDomainRecomputeResult,
-} from "../demo/actions.js";
-import type { DemoScenarioView } from "../demo/store.js";
-import type {
-  GovernanceEventView,
-  GovernanceOverviewView,
-  GovernanceProposalDetailView,
-  GovernanceProposalSummaryView,
-  GovernanceTreasuryView,
-} from "../governance/read.js";
-import type { IndexerRuntimeStatus, PageResult, ReadModelCounts } from "../indexer/store.js";
-import type {
-  AgentReviewCalibrationContributionView,
-  AgentReviewCalibrationView,
-  ClaimReviewState,
-  ReviewAuthorResponseView,
-  ReviewIssueView,
-  ReviewSubmissionView,
-  ReviewTaskRunView,
-  ReviewTaskView,
-} from "../review/types.js";
-import type {
-  AgentRewardStateView,
-  ClaimRewardStateView,
-  RecipientRewardStateView,
-  RewardProtocolConfigView,
-  RewardSettlementHistoryView,
-} from "../rewards/views.js";
 import type {
   AgentRequestActionType,
   AgentRequestEnvelope,
-  AgentRequestView,
-} from "../shared/agent-requests.js";
-import type {
-  PublicWriteActionType,
-  PublicWriteEnvelope,
-} from "../shared/public-write-requests.js";
-import type {
-  AgentView,
-  AppealView,
-  ArtifactView,
-  ChallengeView,
-  CheckpointView,
-  ClaimView,
-  ForecastView,
-  ReadModel,
-  ReplicationView,
-} from "../shared/read-model.js";
-import type {
-  ConfirmSourcePublicationResult,
-  RejectSourcePublicationResult,
-} from "../sources/manual-publication.js";
-import type {
-  ClaimEventView,
-  ClaimFeedItemView,
-  SourceEventView,
-  SourceExtractionCandidate,
-  SourceFeedItemView,
-  SourcePublicationDecisionView,
-  SourceRecordView,
-} from "../sources/types.js";
-import type {
-  ProductionArtifactDraftInput,
-  ProductionArtifactDraftResult,
-  ProductionClaimInput,
-  ProductionClaimResult,
-} from "../submission/actions.js";
-import type { WriteProtocolConfigView } from "../submission/views.js";
-import type {
-  ClaimWorkGraphView,
-  ClaimWorkItemDetailView,
-  ClaimWorkItemView,
-  ClaimWorkOrchestrationView,
-  ClaimWorkRoutingView,
-  ClaimWorkSchedulingView,
-  SourceWorkGraphView,
-} from "../work/types.js";
+} from "../shared/agent-request-envelope.js";
 
-export type { DeploymentAddresses, DeploymentFile } from "../shared/deployment.js";
 export type {
   AgentRequestActionType,
   AgentRequestEnvelope,
-  AgentRequestView,
-  AgentReviewCalibrationContributionView,
-  AgentReviewCalibrationView,
-  AgentRewardStateView,
-  AgentRuntimeEventView,
-  AgentView,
-  AgentWebhookDeliveryView,
-  AgentWebhookEventType,
-  AgentWebhookSubscriptionView,
-  AgentWorkSummaryView,
-  AppealView,
-  ArtifactMaintenanceTaskRunView,
-  ArtifactMaintenanceTaskView,
-  ArtifactView,
-  ChallengeView,
-  CheckpointView,
-  ClaimEventView,
-  ClaimFeedItemView,
-  ClaimReviewState,
-  ClaimRewardStateView,
-  ClaimView,
-  ClaimWorkGraphView,
-  ClaimWorkItemDetailView,
-  ClaimWorkItemView,
-  ClaimWorkOrchestrationView,
-  ClaimWorkRoutingView,
-  ClaimWorkSchedulingView,
-  ConfirmSourcePublicationResult,
-  DemoClaimInput,
-  DemoClaimResult,
-  DemoDomainRecomputeResult,
-  DemoScenarioView,
-  ForecastView,
-  GovernanceEventView,
-  GovernanceOverviewView,
-  GovernanceProposalDetailView,
-  GovernanceProposalSummaryView,
-  GovernanceTreasuryView,
-  IndexerRuntimeStatus,
-  PersistedArtifactAuditView,
-  PersistedArtifactProvenanceView,
-  PersistedArtifactReplicaView,
-  PersistedArtifactView,
-  ProductionArtifactDraftInput,
-  ProductionArtifactDraftResult,
-  ProductionClaimInput,
-  ProductionClaimResult,
-  PublicWriteActionType,
-  PublicWriteEnvelope,
-  ReadModel,
-  ReadModelCounts,
-  RecipientRewardStateView,
-  RejectSourcePublicationResult,
-  ReplicationJobRunView,
-  ReplicationJobView,
-  ReplicationView,
-  ReviewAuthorResponseView,
-  ReviewIssueView,
-  ReviewSubmissionView,
-  ReviewTaskRunView,
-  ReviewTaskView,
-  RewardProtocolConfigView,
-  RewardSettlementHistoryView,
-  SourceEventView,
-  SourceExtractionCandidate,
-  SourceFeedItemView,
-  SourcePublicationDecisionView,
-  SourceRecordView,
-  SourceWorkGraphView,
-  WriteProtocolConfigView,
+} from "../shared/agent-request-envelope.js";
+export type { DeploymentAddresses, DeploymentFile } from "../shared/deployment.js";
+
+export type ProtocolRecord = any;
+
+export type AgentRequestView = ProtocolRecord;
+export type AgentReviewCalibrationContributionView = ProtocolRecord;
+export type AgentReviewCalibrationView = ProtocolRecord;
+export type AgentRewardStateView = ProtocolRecord;
+export type AgentRuntimeEventView = ProtocolRecord;
+export type AgentView = ProtocolRecord;
+export type AgentWebhookDeliveryView = ProtocolRecord;
+export type AgentWebhookEventType = string;
+export type AgentWebhookSubscriptionView = ProtocolRecord;
+export type AgentWorkSummaryView = ProtocolRecord;
+export type AppealView = ProtocolRecord;
+export type ArtifactMaintenanceTaskRunView = ProtocolRecord;
+export type ArtifactMaintenanceTaskView = ProtocolRecord;
+export type ArtifactView = ProtocolRecord;
+export type ChallengeView = ProtocolRecord;
+export type CheckpointView = ProtocolRecord;
+export type ClaimEventView = ProtocolRecord;
+export type ClaimFeedItemView = ProtocolRecord;
+export type ClaimReviewState = ProtocolRecord;
+export type ClaimRewardStateView = ProtocolRecord;
+export type ClaimView = ProtocolRecord;
+export type ClaimWorkGraphView = ProtocolRecord;
+export type ClaimWorkItemDetailView = ProtocolRecord;
+export type ClaimWorkItemView = ProtocolRecord;
+export type ClaimWorkOrchestrationView = ProtocolRecord;
+export type ClaimWorkRoutingView = ProtocolRecord;
+export type ClaimWorkSchedulingView = ProtocolRecord;
+export type ConfirmSourcePublicationResult = ProtocolRecord;
+export type DemoClaimInput = ProtocolRecord;
+export type DemoClaimResult = ProtocolRecord;
+export type DemoDomainRecomputeResult = ProtocolRecord;
+export type DemoScenarioView = ProtocolRecord;
+export type ForecastView = ProtocolRecord;
+export type GovernanceEventView = ProtocolRecord;
+export type GovernanceOverviewView = ProtocolRecord;
+export type GovernanceProposalDetailView = ProtocolRecord;
+export type GovernanceProposalSummaryView = ProtocolRecord;
+export type GovernanceTreasuryView = ProtocolRecord;
+export type IndexerRuntimeStatus = ProtocolRecord;
+export type PersistedArtifactAuditView = ProtocolRecord;
+export type PersistedArtifactProvenanceView = ProtocolRecord;
+export type PersistedArtifactReplicaView = ProtocolRecord;
+export type PersistedArtifactView = ProtocolRecord;
+export type ProductionArtifactDraftInput = ProtocolRecord;
+export type ProductionArtifactDraftResult = ProtocolRecord;
+export type ProductionClaimInput = ProtocolRecord;
+export type ProductionClaimResult = ProtocolRecord;
+export type ReadModelCounts = Record<string, number>;
+export type RecipientRewardStateView = ProtocolRecord;
+export type RejectSourcePublicationResult = ProtocolRecord;
+export type ReplicationJobRunView = ProtocolRecord;
+export type ReplicationJobView = ProtocolRecord;
+export type ReplicationView = ProtocolRecord;
+export type ReviewAuthorResponseView = ProtocolRecord;
+export type ReviewIssueView = ProtocolRecord;
+export type ReviewSubmissionView = ProtocolRecord;
+export type ReviewTaskRunView = ProtocolRecord;
+export type ReviewTaskView = ProtocolRecord;
+export type RewardProtocolConfigView = ProtocolRecord;
+export type RewardSettlementHistoryView = ProtocolRecord;
+export type SourceEventView = ProtocolRecord;
+export type SourceExtractionCandidate = ProtocolRecord;
+export type SourceFeedItemView = ProtocolRecord;
+export type SourcePublicationDecisionView = ProtocolRecord;
+export type SourceRecordView = ProtocolRecord;
+export type SourceWorkGraphView = ProtocolRecord;
+export type WriteProtocolConfigView = ProtocolRecord;
+
+export type PublicWriteActionType =
+  | "claim_create"
+  | "claim_draft_from_artifact"
+  | "domain_recompute"
+  | "replication_job_open"
+  | "replication_job_process"
+  | "replication_job_resolve"
+  | "source_publication_confirm"
+  | "source_publication_reject"
+  | "source_submit";
+
+export type PublicWriteEnvelope = {
+  actionType: PublicWriteActionType;
+  actorAddress: string;
+  chainId: number;
+  issuedAt: string;
+  payload: ProtocolRecord;
+  requestNonce: string;
+  scopeKey: string;
+};
+
+export type ReadModel = {
+  metadata: ProtocolRecord;
+  [key: string]: unknown;
+};
+
+export type PageResult<T> = {
+  items: T[];
+  limit: number;
+  offset: number;
+  total: number;
 };
 
 export type PagedResponse<T> = PageResult<T>;

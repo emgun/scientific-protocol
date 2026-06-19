@@ -243,7 +243,7 @@ function buildReplicationSubmissionPayload(
   const artifactCount = claim.artifacts?.length ?? claim.collectionCounts.artifacts;
   const supportiveReplications =
     claim.replications?.filter(
-      (replication) =>
+      (replication: { outcome?: number; resolutionStatus?: number }) =>
         replication.resolutionStatus === 1 ||
         replication.resolutionStatus === 2 ||
         replication.outcome === 1 ||

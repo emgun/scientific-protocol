@@ -1,0 +1,27 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": false,
+    "declaration": true,
+    "declarationMap": false,
+    "noEmit": false,
+    "outDir": "dist",
+    "rootDir": "src",
+    "sourceMap": false
+  },
+  "include": [
+    "src/generated/contracts.ts",
+    "src/sdk/client.ts",
+    "src/sdk/index.ts",
+    "src/sdk/rewards.ts",
+    "src/sdk/types.ts",
+    "src/shared/agent-request-envelope.ts",
+    "src/shared/artifact-storage-attestations.ts",
+    "src/shared/artifact-storage-bundles.ts",
+    "src/shared/artifact-storage-policy.ts",
+    "src/shared/contracts.ts",
+    "src/shared/deployment.ts",
+    "src/shared/secrets.ts",
+    "src/shared/sha256.ts"
+  ]
+}
