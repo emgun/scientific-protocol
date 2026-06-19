@@ -77,6 +77,7 @@ Typical path:
 
 ```bash
 npm install
+forge install foundry-rs/forge-std@v1.9.7 --no-git --shallow
 npm run build
 npm test
 npm run node

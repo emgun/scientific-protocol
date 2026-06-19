@@ -1,6 +1,6 @@
 # Scientific Protocol
 
-Scientific Protocol is an decentralized protocol for registering scientific claims, binding them
+Scientific Protocol is a decentralized protocol for registering scientific claims, binding them
 to evidence, coordinating replication and review, resolving objective outcomes, and rewarding useful
 scientific work.
 
@@ -35,6 +35,7 @@ Use Node 22 and npm:
 
 ```bash
 npm install
+forge install foundry-rs/forge-std@v1.9.7 --no-git --shallow
 npm run validate:env
 ```
 

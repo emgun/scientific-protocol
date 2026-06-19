@@ -2,7 +2,7 @@ import type {
   ArtifactDurabilityClass,
   ArtifactStoragePolicyInput,
 } from "./artifact-storage-policy.js";
-import { sha256Hex } from "./persisted-artifacts.js";
+import { sha256Hex } from "./sha256.js";
 
 export type ArtifactStorageBundleManifestArtifactInput = {
   artifactKey: string;

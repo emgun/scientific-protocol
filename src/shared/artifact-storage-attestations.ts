@@ -4,7 +4,7 @@ import type {
   ArtifactStorageAttestationInput,
   ArtifactStorageCommitmentKind,
 } from "./artifact-storage-policy.js";
-import { sha256Hex } from "./persisted-artifacts.js";
+import { sha256Hex } from "./sha256.js";
 
 export type ArtifactStorageAttestationActionType = "artifact_storage_attestation";
 
