@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: scientific_protocol
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_USER: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d scientific_protocol"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      SP_COMPOSE_POSTGRES_PORT: "5434"
+      SP_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/scientific_protocol
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.5.1
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate environment
+        run: npm run validate:env
+
+      - name: Generate contract artifacts
+        run: |
+          npm run build
+          git diff --exit-code -- src/generated/contracts.ts
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm run test:all
+
+      - name: Gas snapshot check
+        run: npm run gas:check

@@ -1,0 +1,5 @@
+name: sp-node22
+channels:
+  - conda-forge
+dependencies:
+  - nodejs=22

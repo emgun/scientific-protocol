@@ -1,0 +1,27 @@
+{
+  "network": "localhost",
+  "chainId": 31337,
+  "deploymentBlock": 56,
+  "deployedAt": "2026-04-23T23:41:22.268Z",
+  "addresses": {
+    "accessController": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+    "protocolGovernanceToken": "0x851356ae760d987E095750cCeb3bC6014560891C",
+    "protocolTimelock": "0xf5059a5D33d5853360D16C683c16e67980206f36",
+    "protocolGovernor": "0x95401dc811bb5740090279Ba06cfA8fcF6113778",
+    "protocolTreasury": "0x998abeb3E57409262aE5b751f60747921B33613E",
+    "protocolParameters": "0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1",
+    "resolutionModuleRegistry": "0x9A9f2CCfdE556A7E9Ff0848998Aa4a0CFD8863AE",
+    "claimRegistry": "0x09635F643e140090A9A8Dcd712eD6285858ceBef",
+    "artifactRegistry": "0xc5a5C42992dECbae36851359345FE25997F5C42d",
+    "bondEscrow": "0x67d269191c92Caf3cD7723F116c85e6E9bf55933",
+    "claimRewardVault": "0xc3e53F4d16Ae77Db1c982e75a937B9f60FE63690",
+    "agentRegistry": "0xE6E340D132b5f46d1e472DebcD681B2aBc16e57E",
+    "replicationRegistry": "0x84eA74d481Ee0A5332c457a4d796187F6Ba67fEB",
+    "reputationCheckpointRegistry": "0x9E545E3C0baAB3E08CdfD552C960A1050f373042",
+    "epistemicMarket": "0xa82fF9aFd8f496c3d6ac40E2a0F282E47488CFc9",
+    "appealsRegistry": "0x1613beB3B2C4f22Ee086B2b38C1476A3cE7f78E8",
+    "computationalModule": "0x68B1D87F95878fE05B998F19b66F4baba5De1aed",
+    "benchmarkModule": "0x3Aa5ebB10DC797CAC828524e59A333d0A371443c",
+    "wetLabModule": "0xc6e7DF5E7b4f2A278906862b61205850344D4e7d"
+  }
+}

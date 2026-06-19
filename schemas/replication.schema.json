@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scientific-protocol.local/schemas/replication.schema.json",
+  "title": "ReplicationPayload",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "replicationId",
+    "claimId",
+    "replicator",
+    "environmentHash",
+    "resultHash",
+    "evidenceHash",
+    "outcome",
+    "resolutionStatus",
+    "submittedAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string"
+    },
+    "replicationId": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "claimId": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "replicator": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{40}$"
+    },
+    "agentId": {
+      "type": ["integer", "null"],
+      "minimum": 1
+    },
+    "environmentHash": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{64}$"
+    },
+    "resultHash": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{64}$"
+    },
+    "evidenceHash": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{64}$"
+    },
+    "outcome": {
+      "type": "string",
+      "enum": [
+        "Pending",
+        "Supports",
+        "PartiallySupports",
+        "Inconclusive",
+        "FailsToSupport",
+        "InvalidSubmission",
+        "FraudSignal"
+      ]
+    },
+    "resolutionStatus": {
+      "type": "string",
+      "enum": [
+        "Pending",
+        "Supported",
+        "Qualified",
+        "Inconclusive",
+        "Refuted",
+        "FraudSignal",
+        "Escalated"
+      ]
+    },
+    "confidenceBps": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "maximum": 10000
+    },
+    "resolverType": {
+      "type": ["string", "null"]
+    },
+    "resolutionHash": {
+      "type": ["string", "null"],
+      "pattern": "^0x[a-fA-F0-9]{64}$"
+    },
+    "resolutionEvidenceHash": {
+      "type": ["string", "null"],
+      "pattern": "^0x[a-fA-F0-9]{64}$"
+    },
+    "resolutionEvidenceURI": {
+      "type": ["string", "null"]
+    },
+    "submittedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "resolvedAt": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    }
+  }
+}

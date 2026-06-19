@@ -1,0 +1,146 @@
+# Security Review
+
+Date: April 23, 2026 (updated June 10, 2026 after the market, appeals, and registry hardening pass)
+
+Use [current-state.md](./current-state.md) for the canonical architecture narrative. This
+document is narrower: it captures the current security posture and the still-open security work for
+protocol deployments.
+
+## Scope
+
+This review covers the current protocol surface, not just the original MVP contract set.
+
+That includes:
+
+- the core contract stack
+- source-centric ingress and claim publication paths
+- wallet-signed public writes
+- wallet-signed operator lifecycle writes
+- artifact persistence and verification
+- the offchain operator workflows that index, process, resolve, checkpoint, and repair state
+
+The chain remains the canonical source of truth for claim, replication, checkpoint, governance,
+and settlement state. Offchain services improve availability and workflow throughput, but they are
+not the authority boundary.
+
+## Checklist
+
+### Reentrancy and value transfer
+
+- `BondEscrow`, `AgentRegistry`, and `ClaimRewardVault` use `SimpleReentrancyGuard` on
+  value-moving paths.
+- Value transfers occur after state updates in those contracts.
+- The unified reward layer uses pull-based recipient withdrawals through `ClaimRewardVault`.
+- `BondEscrow` still retains older push-style bond and bounty release paths for legacy escrow
+  flows. Production hardening should keep narrowing those remaining push-style paths or define a
+  stricter recipient-failure policy around them.
+
+### Authorization and write attribution
+
+- Resolver, checkpoint publisher, escrow admin, parameter admin, market settler, and court actions
+  are role-gated through `AccessController`.
+- Public claim and source lifecycle writes now use signed envelopes rather than relying on demo
+  routes.
+- Replication submission, resolution submission, and checkpoint publication use signed
+  operator-request envelopes with reserved nonces and persisted payload artifacts before chain
+  submission.
+- Operator routes can still expose a bearer-token compatibility fallback, but public deployments
+  should treat that path as disabled-by-default and non-canonical.
+- Sandbox admin routes are explicitly separate from production writes and should not be treated as
+  part of production correctness.
+
+### Accounting and settlement safety
+
+- Author bond, bounty balance, and reserved bounty balance are tracked separately.
+- Reservations are single-use and cannot be released twice.
+- Reservation amount cannot exceed currently unreserved bounty balance.
+- Author bond slash and refund paths cannot exceed the tracked bond balance.
+- Reward settlements now have explicit settlement entries and pull-based withdrawal paths in the
+  newer unified reward layer.
+- Forecast settlement requires the reveal window to be closed for unrevealed forecasts, and
+  unrevealed forecasts always forfeit their stake to the reward pool. Refunding them would allow
+  committing opposite forecasts and revealing only the winner.
+- Revealed forecasts that the settler never settles can be reclaimed (stake only, no bonus) after
+  a long settler-inactivity delay.
+- Challenge bonds stay committed for a minimum challenge duration, so a challenger cannot rescue a
+  bond by withdrawing just ahead of a dismissal.
+- Appeal bonds are outcome-dependent: lost appeals (`Rejected`, `Upheld`) forfeit to the protocol
+  treasury, won or closed appeals are credited for pull-based withdrawal, so a reverting appellant
+  contract cannot block adjudication.
+- New claims enforce a governance-set minimum author bond read from `ProtocolParameters`.
+- Challenges and appeals validate that referenced replication and challenge ids belong to the
+  named claim before accepting value.
+- Resolution modules can be disabled by the module admin without rewriting claims already bound to
+  them.
+
+### Lifecycle safety
+
+- `ClaimRegistry` enforces an explicit status transition graph.
+- `ReplicationRegistry` prevents resolving a replication twice and validates module-specific status
+  and resolver-type combinations before storing the result.
+- `ReputationCheckpointRegistry` validates claim, agent, and module subjects before publishing
+  checkpoints.
+- Source ingestion and source publication are gated by canonicalization, deduplication, signed
+  requests, and explicit policy decisions before a published claim is created.
+
+### Event completeness and auditability
+
+- Core settlement transitions emit events and are projected by the indexer.
+- Offchain operator actions have relational audit trails in Postgres:
+  - replication job submissions
+  - resolution runs
+  - checkpoint publications
+  - source publication decisions
+- Artifact ingestion, extraction, and repair flows persist supporting artifacts that can be
+  inspected offchain even when the chain remains the canonical lifecycle record.
+
+### Artifact integrity and offchain trust assumptions
+
+- Artifact integrity is protected by content hashing and verification before downstream workflows
+  consume persisted artifacts.
+- The repository supports IPFS for canonical artifact storage plus filesystem, HTTP object-store
+  style, S3-compatible, and GCS backends for local or mirrored storage.
+- Availability remains an operator concern. Production deployment should use redundant IPFS pinning
+  and retention controls rather than a single gateway.
+- Resolver, checkpoint publisher, indexer, and artifact persistence are still semi-trusted
+  operated services. They are replaceable, but they can still fail or disappear.
+- Recovery, alerting, backups, and incident response remain deployment responsibilities for
+  downstream operators. Those runbooks belong with the operated product or node deployment, not in
+  the public protocol package.
+- Local runtime state such as `ops/runtime/`, `ops/artifact-store/`, `ops/postgres-data/`, and
+  `.conda/` is intentionally ignored in Git. Production release and deployment workflows should
+  preserve that boundary and never package local credentials, runtime logs, or local data
+  directories into shipped artifacts.
+
+## Findings
+
+### Acceptable for the current launch posture
+
+- role-gated contract authority through `AccessController`
+- signed public-write and signed operator-write attribution
+- auditable chain writes with stored request and run artifacts
+- content-addressed artifact persistence with verification
+- unified reward withdrawals through pull-based recipient flows
+- explicit sandbox isolation instead of treating demo admin routes as production writes
+
+### Still recommended before public production rollout
+
+- independent contract and property review
+- further reduction of legacy `BondEscrow` push-style release reliance, or a stronger
+  recipient-failure policy around those paths
+- broader invariant and fuzz coverage beyond the current targeted hardening tests
+- explicit threat models for resolver compromise, checkpoint compromise, and malicious operator
+  inactivity
+- explicit threat models for artifact-store compromise across HTTP, S3-compatible, GCS, and IPFS
+  mirror backends
+- deployment verification that ignored local runtime credentials and logs cannot leak into images,
+  bundles, or backup exports by accident
+
+## Security reading order
+
+If you are trying to understand the whole system, use this order:
+
+1. [current-state.md](./current-state.md)
+2. this document
+
+This page should not be read as the canonical architecture summary.

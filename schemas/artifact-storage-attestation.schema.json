@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scientific-protocol.local/schemas/artifact-storage-attestation.schema.json",
+  "title": "ArtifactStorageAttestation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "version", "envelope", "signature"],
+  "properties": {
+    "kind": {
+      "const": "scientific.artifact-storage-attestation"
+    },
+    "version": {
+      "const": 1
+    },
+    "envelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "actionType",
+        "artifactKey",
+        "attestorAddress",
+        "chainId",
+        "cid",
+        "commitmentKind",
+        "evidenceRef",
+        "issuedAt",
+        "nodeId",
+        "provider",
+        "providerMetadata",
+        "requestNonce",
+        "retentionUntil",
+        "retrievalUrl",
+        "scopeKey",
+        "storageClass",
+        "storageStartedAt"
+      ],
+      "properties": {
+        "actionType": {
+          "const": "artifact_storage_attestation"
+        },
+        "artifactKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "attestorAddress": {
+          "type": "string",
+          "pattern": "^0x[a-fA-F0-9]{40}$"
+        },
+        "chainId": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "cid": {
+          "type": "string",
+          "minLength": 1
+        },
+        "commitmentKind": {
+          "type": "string",
+          "enum": ["filecoin", "hot", "institutional", "mirror", "provider", "temporary"]
+        },
+        "evidenceRef": {
+          "type": ["string", "null"]
+        },
+        "issuedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "nodeId": {
+          "type": ["string", "null"]
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "providerMetadata": {
+          "type": "object"
+        },
+        "requestNonce": {
+          "type": "string",
+          "minLength": 1
+        },
+        "retentionUntil": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "retrievalUrl": {
+          "type": ["string", "null"]
+        },
+        "scopeKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "storageClass": {
+          "type": "string",
+          "enum": ["A", "B", "C", "D"]
+        },
+        "storageStartedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "signature": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]+$"
+    },
+    "signedPayloadHash": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{64}$"
+    },
+    "recoveredAddress": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{40}$"
+    }
+  }
+}

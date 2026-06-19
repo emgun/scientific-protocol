@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scientific-protocol.local/schemas/evaluation.schema.json",
+  "title": "EvaluationCheckpointPayload",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "domainId", "subject", "scores", "payloadHash", "createdAt"],
+  "properties": {
+    "schemaVersion": {
+      "type": "string"
+    },
+    "domainId": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["subjectType"],
+      "properties": {
+        "subjectType": {
+          "type": "string",
+          "enum": ["actor", "claim", "actorClaimPair", "agent", "module"]
+        },
+        "actor": {
+          "type": ["string", "null"],
+          "pattern": "^0x[a-fA-F0-9]{40}$"
+        },
+        "claimId": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        },
+        "agentId": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        },
+        "module": {
+          "type": ["string", "null"],
+          "pattern": "^0x[a-fA-F0-9]{40}$"
+        }
+      }
+    },
+    "scores": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reproducibility",
+        "robustness",
+        "calibration",
+        "externalValidity",
+        "reuse",
+        "misconductRisk"
+      ],
+      "properties": {
+        "reproducibility": {
+          "type": "number",
+          "minimum": 0
+        },
+        "robustness": {
+          "type": "number",
+          "minimum": 0
+        },
+        "calibration": {
+          "type": "number",
+          "minimum": 0
+        },
+        "externalValidity": {
+          "type": "number",
+          "minimum": 0
+        },
+        "reuse": {
+          "type": "number",
+          "minimum": 0
+        },
+        "misconductRisk": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "payloadHash": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{64}$"
+    },
+    "uri": {
+      "type": ["string", "null"]
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "producer": {
+      "type": ["string", "null"]
+    }
+  }
+}

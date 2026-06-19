@@ -1,0 +1,19 @@
+FROM node:22-bullseye
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY . .
+RUN npx hardhat compile
+
+ENV SP_DATABASE_URL=postgresql://postgres:postgres@postgres:5432/scientific_protocol
+ENV SP_RPC_URL=http://hardhat:8545
+ENV SP_DEPLOYMENT_PATH=/app/ops/runtime/local.addresses.json
+ENV SP_READ_MODEL_PATH=/app/ops/runtime/read-model.json
+ENV SP_ARTIFACT_BACKEND=filesystem
+ENV SP_ARTIFACT_FILESYSTEM_ROOT=/app/ops/artifact-store
+ENV PORT=3000
+
+CMD ["npm", "run", "api:local"]

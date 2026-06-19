@@ -1,0 +1,111 @@
+{
+  "name": "@scientific/protocol",
+  "version": "0.1.0",
+  "description": "Claim-centric protocol for scientific publication, replication, review, and reward.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/emgun/scientific-protocol.git"
+  },
+  "bugs": {
+    "url": "https://github.com/emgun/scientific-protocol/issues"
+  },
+  "homepage": "https://github.com/emgun/scientific-protocol#readme",
+  "keywords": [
+    "science",
+    "ethereum",
+    "protocol",
+    "replication",
+    "reputation",
+    "solidity"
+  ],
+  "exports": {
+    ".": "./src/sdk/index.ts",
+    "./contracts": "./src/generated/contracts.ts",
+    "./schemas/claim": "./schemas/claim.schema.json",
+    "./schemas/replication": "./schemas/replication.schema.json",
+    "./schemas/evaluation": "./schemas/evaluation.schema.json",
+    "./schemas/artifact-storage-attestation": "./schemas/artifact-storage-attestation.schema.json",
+    "./schemas/artifact-storage-bundle": "./schemas/artifact-storage-bundle.schema.json"
+  },
+  "files": [
+    "src/sdk",
+    "src/generated",
+    "src/agents",
+    "src/artifacts",
+    "src/checkpoints",
+    "src/coordinator",
+    "src/demo",
+    "src/governance",
+    "src/indexer",
+    "src/reputation",
+    "src/resolver",
+    "src/review",
+    "src/rewards",
+    "src/shared",
+    "src/sources",
+    "src/submission",
+    "src/work",
+    "src/workers",
+    "schemas",
+    "python",
+    "README.md"
+  ],
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22 <23"
+  },
+  "scripts": {
+    "build": "bash script/run-with-node22-env.sh hardhat clean && bash script/run-with-node22-env.sh hardhat compile && npm run generate:contracts",
+    "lint": "npm run lint:biome && npm run lint:prettier && npm run lint:shell",
+    "lint:biome": "bash script/run-with-node22-env.sh npx biome check --diagnostic-level=error --files-ignore-unknown=true src test script hardhat.config.ts package.json tsconfig.json biome.json .prettierrc.json",
+    "lint:prettier": "bash script/run-with-node22-env.sh prettier --check .",
+    "lint:shell": "bash -c 'for file in script/*.sh; do bash -n \"$file\"; done'",
+    "format": "npm run format:biome && npm run format:prettier",
+    "format:biome": "bash script/run-with-node22-env.sh npx biome check --write --files-ignore-unknown=true src test script hardhat.config.ts package.json tsconfig.json biome.json .prettierrc.json",
+    "format:prettier": "bash script/run-with-node22-env.sh prettier --write .",
+    "generate:contracts": "bash script/run-with-node22-env.sh node --import tsx script/generate-contract-artifacts.ts && bash script/run-with-node22-env.sh npx biome format --write src/generated/contracts.ts",
+    "typecheck": "bash script/run-with-node22-env.sh npx tsc --noEmit",
+    "test": "bash script/run-with-node22-env.sh hardhat test",
+    "test:forge": "forge test",
+    "test:all": "npm run test:forge && HOME=$PWD npm test",
+    "validate:env": "bash script/run-with-node22-env.sh node --import tsx script/validate-env.ts",
+    "node": "bash script/run-with-node22-env.sh hardhat node",
+    "node:env:init": "bash script/init-node22-env.sh",
+    "deploy": "bash script/run-with-node22-env.sh hardhat run --network localhost script/deploy-protocol.ts",
+    "gas:snapshot": "forge snapshot --snap .gas-snapshot",
+    "gas:check": "forge snapshot --check .gas-snapshot"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.9",
+    "@nomicfoundation/hardhat-ethers": "^4.0.0",
+    "@nomicfoundation/hardhat-node-test-runner": "^3.0.11",
+    "@types/pg": "^8.11.10",
+    "chai": "^5.1.1",
+    "hardhat": "^3.1.12",
+    "pg": "^8.13.1",
+    "prettier": "^3.8.1",
+    "prettier-plugin-solidity": "^2.3.1",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.19.4",
+    "typescript": "^5.5.4"
+  },
+  "overrides": {
+    "@tootallnate/once": "3.0.1",
+    "@actions/http-client": "2.2.3",
+    "@aws-sdk/xml-builder": "3.972.22",
+    "fast-xml-parser": "5.8.0",
+    "undici": "^6.24.0",
+    "ws": "8.21.0"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1011.0",
+    "@google-cloud/storage": "^7.19.0",
+    "@openzeppelin/contracts": "^4.9.6",
+    "ethers": "^6.13.2",
+    "pdf-parse": "^2.4.5"
+  }
+}

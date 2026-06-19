@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scientific-protocol.local/schemas/claim.schema.json",
+  "title": "ClaimPayload",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "claimId",
+    "domainId",
+    "author",
+    "statementHash",
+    "methodologyHash",
+    "scopeHash",
+    "metadataHash",
+    "predictionHooksHash",
+    "status",
+    "resolutionModule",
+    "createdAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string"
+    },
+    "claimId": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "domainId": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "author": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{40}$"
+    },
+    "statementHash": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{64}$"
+    },
+    "methodologyHash": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{64}$"
+    },
+    "scopeHash": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{64}$"
+    },
+    "metadataHash": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{64}$"
+    },
+    "predictionHooksHash": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{64}$"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "Draft",
+        "Published",
+        "UnderReplication",
+        "ProvisionallySupported",
+        "Qualified",
+        "Refuted",
+        "Fraudulent",
+        "Deprecated"
+      ]
+    },
+    "resolutionModule": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{40}$"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "revisionOfClaimId": {
+      "type": ["integer", "null"],
+      "minimum": 1
+    }
+  }
+}

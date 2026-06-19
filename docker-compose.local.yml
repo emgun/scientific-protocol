@@ -1,0 +1,87 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: scientific_protocol
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "${SP_COMPOSE_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d scientific_protocol"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  hardhat:
+    image: scientific_protocol-local
+    build:
+      context: .
+      dockerfile: Dockerfile.local
+    command: npm run node
+    ports:
+      - "8545:8545"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8545',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'eth_blockNumber',params:[]})}).then((response)=>process.exit(response.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mvp-bootstrap:
+    image: scientific_protocol-local
+    command: npm run compose:mvp:bootstrap
+    environment:
+      SP_DATABASE_URL: postgresql://postgres:postgres@postgres:5432/scientific_protocol
+      SP_RPC_URL: http://hardhat:8545
+      SP_DEPLOYMENT_PATH: /app/ops/runtime/local.addresses.json
+      SP_READ_MODEL_PATH: /app/ops/runtime/read-model.json
+      SP_ARTIFACT_BACKEND: filesystem
+      SP_ARTIFACT_FILESYSTEM_ROOT: /app/ops/artifact-store
+    depends_on:
+      postgres:
+        condition: service_healthy
+      hardhat:
+        condition: service_healthy
+    volumes:
+      - runtime_data:/app/ops/runtime
+      - artifact_data:/app/ops/artifact-store
+
+  api:
+    image: scientific_protocol-local
+    command: npm run api:local
+    environment:
+      SP_DATABASE_URL: postgresql://postgres:postgres@postgres:5432/scientific_protocol
+      SP_RPC_URL: http://hardhat:8545
+      SP_DEPLOYMENT_PATH: /app/ops/runtime/local.addresses.json
+      SP_READ_MODEL_PATH: /app/ops/runtime/read-model.json
+      SP_ARTIFACT_BACKEND: filesystem
+      SP_ARTIFACT_FILESYSTEM_ROOT: /app/ops/artifact-store
+      PORT: 3000
+    ports:
+      - "${SP_COMPOSE_API_PORT:-3000}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      hardhat:
+        condition: service_healthy
+      mvp-bootstrap:
+        condition: service_completed_successfully
+    volumes:
+      - runtime_data:/app/ops/runtime
+      - artifact_data:/app/ops/artifact-store
+
+volumes:
+  postgres_data:
+  runtime_data:
+  artifact_data:

@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scientific-protocol-client"
+version = "0.1.0"
+description = "Python client and operator CLI for the Scientific Protocol hybrid agent runtime."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Scientific Protocol" }]
+dependencies = []
+
+[project.scripts]
+sp-agent-client = "scientific_protocol_client:main"
+
+[tool.setuptools]
+py-modules = ["scientific_protocol_client"]
