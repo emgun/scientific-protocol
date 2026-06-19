@@ -1,10 +1,3 @@
-import type { ReplicationJobRunView, ReplicationJobView } from "../coordinator/store.js";
-import type { DemoClaimResult, DemoDomainRecomputeResult } from "../demo/actions.js";
-import type { CheckpointView, ClaimView, ReplicationView } from "../shared/read-model.js";
-import type {
-  ProductionArtifactDraftResult,
-  ProductionClaimResult,
-} from "../submission/actions.js";
 import type {
   AdminStatusResponse,
   AgentRequestDetailResponse,
@@ -20,18 +13,22 @@ import type {
   ArtifactMaintenanceTaskDetailResponse,
   ArtifactMaintenanceTaskRunView,
   ArtifactMaintenanceTaskView,
+  CheckpointView,
   ClaimDetailResponse,
   ClaimEventsResponse,
   ClaimFeedResponse,
   ClaimListQuery,
   ClaimReviewState,
   ClaimRewardStateResponse,
+  ClaimView,
   ClaimWorkGraphResponse,
   ClaimWorkItemDetailResponse,
   ClaimWorkItemView,
   ConfirmSourcePublicationResponse,
   CreateDemoClaimRequest,
   DemoAdminStatusResponse,
+  DemoClaimResult,
+  DemoDomainRecomputeResult,
   DemoMutationResponse,
   DemoScenariosResponse,
   DomainLeaderboardResponse,
@@ -45,9 +42,14 @@ import type {
   PagedResponse,
   PersistedArtifactDetailResponse,
   ProcessDemoReplicationJobRequest,
+  ProductionArtifactDraftResult,
+  ProductionClaimResult,
   RecipientRewardStateResponse,
   RejectSourcePublicationResponse,
   ReplicationJobDetailResponse,
+  ReplicationJobRunView,
+  ReplicationJobView,
+  ReplicationView,
   ResolveDemoReplicationJobRequest,
   ReviewSubmissionView,
   ReviewTaskDetailResponse,

@@ -33,8 +33,10 @@ const operatedServiceFilePrefixes = [
 
 type PackageJson = {
   dependencies?: Record<string, string>;
-  exports?: Record<string, string>;
+  exports?: Record<string, string | { import?: string; types?: string }>;
   files?: string[];
+  main?: string;
+  types?: string;
 };
 
 function loadPackageJson(): PackageJson {
@@ -82,6 +84,22 @@ function collectRuntimeClosure(entrypoints: string[]): Set<string> {
   return visited;
 }
 
+function runtimeExportEntrypoint(
+  entrypoint: string | { import?: string; types?: string },
+): string | null {
+  return typeof entrypoint === "string" ? entrypoint : (entrypoint.import ?? null);
+}
+
+function toSourceEntrypoint(entrypoint: string): string | null {
+  if (entrypoint.startsWith("./src/")) {
+    return entrypoint;
+  }
+  if (entrypoint.startsWith("./dist/") && entrypoint.endsWith(".js")) {
+    return `./src/${entrypoint.slice("./dist/".length, -".js".length)}.ts`;
+  }
+  return null;
+}
+
 describe("protocol package boundary", () => {
   it("keeps operated-service packages out of production dependencies", () => {
     const packageJson = loadPackageJson();
@@ -98,7 +116,10 @@ describe("protocol package boundary", () => {
     const packageJson = loadPackageJson();
     const files = packageJson.files ?? [];
 
-    expect(files).to.include.members(["README.md", "schemas", "src/generated", "src/sdk"]);
+    expect(packageJson.main).to.equal("./dist/sdk/index.js");
+    expect(packageJson.types).to.equal("./dist/sdk/index.d.ts");
+    expect(files).to.include.members(["README.md", "schemas", "dist"]);
+    expect(files.some((file) => file === "src" || file.startsWith("src/"))).to.equal(false);
     for (const prefix of operatedServiceFilePrefixes) {
       expect(files, prefix).not.to.include(prefix.slice(0, -1));
     }
@@ -106,9 +127,11 @@ describe("protocol package boundary", () => {
 
   it("keeps exported runtime entrypoints independent of operated-service packages", () => {
     const packageJson = loadPackageJson();
-    const entrypoints = Object.values(packageJson.exports ?? {}).filter((entrypoint) =>
-      entrypoint.startsWith("./src/"),
-    );
+    const entrypoints = Object.values(packageJson.exports ?? {})
+      .map(runtimeExportEntrypoint)
+      .filter((entrypoint): entrypoint is string => entrypoint !== null)
+      .map(toSourceEntrypoint)
+      .filter((entrypoint): entrypoint is string => entrypoint !== null);
     const closure = collectRuntimeClosure(entrypoints);
     const importedPackages = new Set<string>();
 

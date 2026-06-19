@@ -1,11 +1,13 @@
 import { readFileSync } from "node:fs";
 
+export type EnvRecord = Record<string, string | undefined>;
+
 function normalizeValue(value: string, trim: boolean): string {
   return trim ? value.trim() : value;
 }
 
 export function readEnvValue(
-  env: NodeJS.ProcessEnv,
+  env: EnvRecord,
   key: string,
   options: {
     trim?: boolean;
@@ -31,11 +33,11 @@ export function readEnvValue(
   }
 }
 
-export function hasConfiguredEnvValue(env: NodeJS.ProcessEnv, key: string): boolean {
+export function hasConfiguredEnvValue(env: EnvRecord, key: string): boolean {
   return Boolean(readEnvValue(env, key) || hasSecretRef(env, key));
 }
 
-export function hasSecretRef(env: NodeJS.ProcessEnv, key: string): boolean {
+export function hasSecretRef(env: EnvRecord, key: string): boolean {
   const secretRef = env[`${key}_SECRET_REF`];
   return typeof secretRef === "string" && secretRef.trim() !== "";
 }

@@ -183,7 +183,7 @@ function isReviewTaskSubmissionResult(result: unknown): result is {
 
 function countSupportiveReplications(claim: ClaimDetailResponse): number {
   return (claim.replications ?? []).filter(
-    (replication) =>
+    (replication: { outcome?: number; resolutionStatus?: number }) =>
       replication.resolutionStatus === 1 ||
       replication.resolutionStatus === 2 ||
       replication.outcome === 1 ||
@@ -196,12 +196,15 @@ function buildEvaluationInput(
   reviewState: ClaimReviewState,
 ): ReviewTaskEvaluationInput {
   return {
-    artifactTypes: (claim.artifacts ?? []).map((artifact) => Number(artifact.artifactType)),
+    artifactTypes: (claim.artifacts ?? []).map((artifact: { artifactType?: unknown }) =>
+      Number(artifact.artifactType),
+    ),
     artifactsCount: claim.artifacts?.length ?? 0,
     challengeCount: claim.challenges?.length ?? 0,
     challengesOpen:
-      claim.challenges?.filter((challenge) => challenge.status === 0 || challenge.status === 3)
-        .length ?? 0,
+      claim.challenges?.filter(
+        (challenge: { status?: number }) => challenge.status === 0 || challenge.status === 3,
+      ).length ?? 0,
     claimStatus: claim.status,
     replicationCount: claim.replications?.length ?? 0,
     reviewState,

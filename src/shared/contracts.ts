@@ -1,6 +1,6 @@
 import { Contract, type ContractRunner, type InterfaceAbi, JsonRpcProvider } from "ethers";
 import { generatedContractArtifacts } from "../generated/contracts.js";
-import { readEnvValue } from "./secrets.js";
+import { type EnvRecord, readEnvValue } from "./secrets.js";
 
 export type ContractName =
   | "AccessController"
@@ -46,7 +46,7 @@ export async function getContract(
   return new Contract(address, artifact.abi, runner) as Contract & Record<string, any>;
 }
 
-export function getRpcUrl(env: NodeJS.ProcessEnv = process.env): string {
+export function getRpcUrl(env: EnvRecord = process.env): string {
   return readEnvValue(env, "SP_RPC_URL") ?? "http://127.0.0.1:8545";
 }
 
