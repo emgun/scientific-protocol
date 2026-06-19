@@ -69,6 +69,8 @@ Refresh the gas baseline when contract behavior changes:
 npm run gas:snapshot
 ```
 
+Release process: see [docs/release.md](docs/release.md).
+
 ## Local Protocol Stack
 
 Start a local Hardhat node:
