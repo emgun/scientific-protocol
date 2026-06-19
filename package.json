@@ -1,5 +1,5 @@
 {
-  "name": "@scientific/protocol",
+  "name": "scientific-protocol",
   "version": "0.1.0",
   "description": "Claim-centric protocol for scientific publication, replication, review, and reward.",
   "license": "MIT",
