@@ -1,6 +1,6 @@
 {
   "name": "scientific-protocol",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Claim-centric protocol for scientific publication, replication, review, and reward.",
   "license": "MIT",
   "repository": {
