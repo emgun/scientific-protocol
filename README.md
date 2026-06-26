@@ -7,6 +7,8 @@ scientific work.
 Claims are the atomic objects. Artifacts are content-addressed. Onchain state stays narrow, while
 indexers, APIs, workers, and storage services remain replaceable node infrastructure.
 
+Public gateway: [scientificprotocol.org](https://scientificprotocol.org)
+
 ## Repository Boundary
 
 This repository contains the protocol implementation, canonical payload schemas, SDKs, generated
