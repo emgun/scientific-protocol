@@ -2422,7 +2422,20 @@ function createDependencyOverrides(
       resetAt: "2026-03-12T00:04:00.000Z",
       finishedAt: "2026-03-12T00:04:30.000Z",
     }),
-    syncReadModel: async () => readModel,
+    syncReadModel: async () => ({
+      metadata: readModel.metadata,
+      counts: {
+        claims: readModel.claims.length,
+        artifacts: readModel.artifacts.length,
+        replications: readModel.replications.length,
+        checkpoints: readModel.checkpoints.length,
+        agents: readModel.agents.length,
+        agentControllers: readModel.agentControllers.length,
+        forecasts: readModel.forecasts.length,
+        challenges: readModel.challenges.length,
+        appeals: readModel.appeals.length,
+      },
+    }),
     ...overrides,
   };
 }

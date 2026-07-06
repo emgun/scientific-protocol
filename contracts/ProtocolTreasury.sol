@@ -24,13 +24,7 @@ contract ProtocolTreasury is Ownable {
         address actor
     );
 
-    constructor(address initialOwner) {
-        if (initialOwner == address(0)) {
-            revert ProtocolTreasuryInvalidRecipient();
-        }
-
-        _transferOwnership(initialOwner);
-    }
+    constructor(address initialOwner) Ownable(initialOwner) {}
 
     receive() external payable {
         emit TreasuryEtherDeposited(msg.sender, msg.value);

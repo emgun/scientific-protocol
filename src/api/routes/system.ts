@@ -66,20 +66,20 @@ export async function handleSystemRoutes(context: RouteContext): Promise<boolean
   }
 
   if (url.pathname === "/admin/sync" && request.method === "POST") {
-    const model = await dependencies.syncReadModel(deploymentPath, readModelPath, databaseUrl, {
+    const synced = await dependencies.syncReadModel(deploymentPath, readModelPath, databaseUrl, {
       env,
     });
     json(response, 200, {
       ok: true,
-      indexedAt: model.metadata.indexedAt,
-      latestBlock: model.metadata.latestBlock,
-      claims: model.claims.length,
-      replications: model.replications.length,
-      checkpoints: model.checkpoints.length,
-      agents: model.agents.length,
-      forecasts: model.forecasts.length,
-      challenges: model.challenges.length,
-      appeals: model.appeals.length,
+      indexedAt: synced.metadata.indexedAt,
+      latestBlock: synced.metadata.latestBlock,
+      claims: synced.counts.claims,
+      replications: synced.counts.replications,
+      checkpoints: synced.counts.checkpoints,
+      agents: synced.counts.agents,
+      forecasts: synced.counts.forecasts,
+      challenges: synced.counts.challenges,
+      appeals: synced.counts.appeals,
     });
     return true;
   }

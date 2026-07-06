@@ -1,8 +1,8 @@
 import { writeFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import type { EventLog, JsonRpcProvider, Log } from "ethers";
-import type { PoolClient } from "pg";
-import { readPositiveIntegerEnv } from "../shared/cli.js";
+import type { Pool, PoolClient } from "pg";
+import { readBooleanEnv, readPositiveIntegerEnv } from "../shared/cli.js";
 import { getContract, getProvider, getRpcUrl } from "../shared/contracts.js";
 import {
   DEFAULT_DEPLOYMENT_PATH,
@@ -39,7 +39,10 @@ import {
   markSyncStarted,
   markSyncSucceeded,
   prepareReadModelStore,
+  type ReadModelCounts,
+  readMetadata,
   readReadModel,
+  readReadModelCounts,
   readSyncCursor,
   releaseReadModelSyncLock,
   updateClaimStatus,
@@ -178,13 +181,27 @@ async function queryFilterWithRetry<T>(
   }
 }
 
+export type ReadModelSyncSummary = {
+  metadata: ReadModel["metadata"];
+  counts: ReadModelCounts;
+};
+
+export type SyncReadModelOptions = {
+  env?: NodeJS.ProcessEnv;
+  /** Prepared pool to reuse across sync ticks; callers keep ownership and lifecycle. */
+  pool?: Pool;
+  /** Materialize the full read model to `outputPath`. Defaults to SP_READ_MODEL_SNAPSHOT. */
+  snapshot?: boolean;
+};
+
 export async function syncReadModel(
   deploymentPath = DEFAULT_DEPLOYMENT_PATH,
   outputPath = DEFAULT_READ_MODEL_PATH,
   databaseUrl = getDatabaseUrl(),
-  options: { env?: NodeJS.ProcessEnv } = {},
-): Promise<ReadModel> {
+  options: SyncReadModelOptions = {},
+): Promise<ReadModelSyncSummary> {
   const env = options.env ?? process.env;
+  const snapshot = options.snapshot ?? readBooleanEnv(env, "SP_READ_MODEL_SNAPSHOT", false);
   const deployment = await loadDeploymentFile(deploymentPath);
   const headProvider = getProvider(getRpcUrl(env));
   let latestBlock: number;
@@ -193,7 +210,9 @@ export async function syncReadModel(
   } finally {
     headProvider.destroy();
   }
-  const pool = await prepareReadModelStore(databaseUrl, DEFAULT_MIGRATIONS_PATH, env);
+  const ownsPool = !options.pool;
+  const pool =
+    options.pool ?? (await prepareReadModelStore(databaseUrl, DEFAULT_MIGRATIONS_PATH, env));
   let lockClient: PoolClient | null = null;
   let contracts: SyncedContracts | null = null;
 
@@ -241,9 +260,14 @@ export async function syncReadModel(
     }
 
     await markSyncSucceeded(lockClient);
-    const model = await readReadModel(pool);
-    await writeFile(outputPath, JSON.stringify(model, null, 2));
-    return model;
+    if (snapshot) {
+      const model = await readReadModel(pool);
+      await writeFile(outputPath, JSON.stringify(model, null, 2));
+    }
+    return {
+      metadata: await readMetadata(pool),
+      counts: await readReadModelCounts(pool),
+    };
   } catch (error) {
     if (!(error instanceof Error && error.name === "ReadModelSyncInProgressError")) {
       const message = error instanceof Error ? error.message : String(error);
@@ -263,7 +287,9 @@ export async function syncReadModel(
     if (lockClient) {
       await releaseReadModelSyncLock(lockClient);
     }
-    await pool.end();
+    if (ownsPool) {
+      await pool.end();
+    }
   }
 }
 

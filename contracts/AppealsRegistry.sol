@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {AccessManaged} from "./utils/AccessManaged.sol";
-import {SimpleReentrancyGuard} from "./utils/SimpleReentrancyGuard.sol";
+import {DepositPausable} from "./utils/DepositPausable.sol";
 import {ProtocolRoles} from "./libraries/ProtocolRoles.sol";
 import {ProtocolTypes} from "./libraries/ProtocolTypes.sol";
 import {IClaimRegistry} from "./interfaces/IClaimRegistry.sol";
 import {IEpistemicMarket} from "./interfaces/IEpistemicMarket.sol";
 import {IReplicationRegistry} from "./interfaces/IReplicationRegistry.sol";
 
-contract AppealsRegistry is AccessManaged, SimpleReentrancyGuard {
+contract AppealsRegistry is DepositPausable, ReentrancyGuard {
     error AppealsRegistryUnknownClaim(uint256 claimId);
     error AppealsRegistryUnknownReplication(uint256 claimId, uint256 replicationId);
     error AppealsRegistryUnknownChallenge(uint256 claimId, uint256 challengeId);
@@ -100,7 +101,7 @@ contract AppealsRegistry is AccessManaged, SimpleReentrancyGuard {
         ProtocolTypes.AppealReason reason,
         bytes32 filingHash,
         string calldata uri
-    ) external payable returns (uint256 appealId) {
+    ) external payable whenDepositsNotPaused returns (uint256 appealId) {
         if (!claimRegistry.claimExists(claimId)) {
             revert AppealsRegistryUnknownClaim(claimId);
         }

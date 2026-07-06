@@ -13,4 +13,5 @@ library ProtocolRoles {
     bytes32 internal constant MARKET_SETTLER_ROLE = keccak256("MARKET_SETTLER_ROLE");
     bytes32 internal constant REWARD_SETTLER_ROLE = keccak256("REWARD_SETTLER_ROLE");
     bytes32 internal constant COURT_ROLE = keccak256("COURT_ROLE");
+    bytes32 internal constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 }

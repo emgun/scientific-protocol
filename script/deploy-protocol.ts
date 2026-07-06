@@ -58,6 +58,7 @@ export const LOCAL_DEPLOYMENT_BOOTSTRAP_ROLES = [
   "MARKET_SETTLER_ROLE",
   "REWARD_SETTLER_ROLE",
   "COURT_ROLE",
+  "PAUSER_ROLE",
 ] as const;
 
 function getContractFactory(name: ArtifactName, signer: ContractRunner): ContractFactory {
@@ -443,7 +444,7 @@ export async function deployLocalFromEnv(env: NodeJS.ProcessEnv = process.env): 
     const timelockProposerRole = await protocolTimelock.PROPOSER_ROLE();
     const timelockCancellerRole = await protocolTimelock.CANCELLER_ROLE();
     const timelockExecutorRole = await protocolTimelock.EXECUTOR_ROLE();
-    const timelockAdminRole = await protocolTimelock.TIMELOCK_ADMIN_ROLE();
+    const timelockAdminRole = await protocolTimelock.DEFAULT_ADMIN_ROLE();
 
     await (
       await protocolTimelock.grantRole(

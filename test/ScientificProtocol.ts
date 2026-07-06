@@ -1306,8 +1306,77 @@ describe("ScientificProtocol", () => {
     ).wait();
     assert.equal(await protocol.accessController.hasRole(role, protocol.other.address), true);
 
-    await (await protocol.accessController.connect(protocol.other).renounceRole(role)).wait();
+    await (
+      await protocol.accessController
+        .connect(protocol.other)
+        .renounceRole(role, protocol.other.address)
+    ).wait();
     assert.equal(await protocol.accessController.hasRole(role, protocol.other.address), false);
+  });
+
+  it("halts value inflows behind the guardian deposit pause while exits stay open", async () => {
+    const protocol = await deployProtocol();
+    await (
+      await protocol.claimRegistry
+        .connect(protocol.author)
+        .createClaim(
+          makeClaimSummary(protocol.author.address, 1n),
+          ethers.parseEther("0.5"),
+          ethers.ZeroAddress,
+        )
+    ).wait();
+
+    await (
+      await protocol.bondEscrow
+        .connect(protocol.author)
+        .depositAuthorBond(1, { value: ethers.parseEther("0.1") })
+    ).wait();
+
+    await assert.rejects(
+      protocol.bondEscrow.connect(protocol.author).setDepositsPaused(true),
+      /AccessManagedMissingRole/,
+    );
+
+    await (
+      await protocol.accessController
+        .connect(protocol.admin)
+        .grantRole(ROLE("PAUSER_ROLE"), protocol.other.address)
+    ).wait();
+    await (await protocol.bondEscrow.connect(protocol.other).setDepositsPaused(true)).wait();
+    await (await protocol.epistemicMarket.connect(protocol.other).setDepositsPaused(true)).wait();
+
+    await assert.rejects(
+      protocol.bondEscrow
+        .connect(protocol.author)
+        .depositAuthorBond(1, { value: ethers.parseEther("0.1") }),
+      /DepositsPausedError/,
+    );
+    await assert.rejects(
+      protocol.bondEscrow
+        .connect(protocol.admin)
+        .fundReplicationBounty(1, { value: ethers.parseEther("0.1") }),
+      /DepositsPausedError/,
+    );
+    await assert.rejects(
+      protocol.epistemicMarket
+        .connect(protocol.other)
+        .fundRewardPool({ value: ethers.parseEther("0.1") }),
+      /DepositsPausedError/,
+    );
+
+    // Exits stay live during a deposit pause: the author bond refund path is not gated.
+    await (
+      await protocol.bondEscrow
+        .connect(protocol.admin)
+        .refundAuthorBond(1, ethers.parseEther("0.05"), protocol.author.address)
+    ).wait();
+
+    await (await protocol.bondEscrow.connect(protocol.other).setDepositsPaused(false)).wait();
+    await (
+      await protocol.bondEscrow
+        .connect(protocol.author)
+        .depositAuthorBond(1, { value: ethers.parseEther("0.1") })
+    ).wait();
   });
 
   it("refuses budget top-ups for inactive agents during reward accrual", async () => {

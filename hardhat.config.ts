@@ -17,7 +17,7 @@ export default defineConfig({
     staging: httpNetwork(process.env.SP_RPC_URL ?? "http://127.0.0.1:8545"),
   },
   solidity: {
-    version: "0.8.24",
+    version: "0.8.28",
     settings: {
       optimizer: {
         enabled: true,

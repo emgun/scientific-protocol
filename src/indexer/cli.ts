@@ -15,20 +15,20 @@ export async function syncReadModelFromEnv(env: NodeJS.ProcessEnv = process.env)
   appeals: number;
 }> {
   const { databaseUrl, deploymentPath, outputPath } = resolveReadModelSyncConfig(env);
-  const model = await syncReadModel(deploymentPath, outputPath, databaseUrl, { env });
+  const summary = await syncReadModel(deploymentPath, outputPath, databaseUrl, { env });
 
   return {
     deploymentPath,
     outputPath,
     databaseUrl,
-    claims: model.claims.length,
-    artifacts: model.artifacts.length,
-    replications: model.replications.length,
-    checkpoints: model.checkpoints.length,
-    agents: model.agents.length,
-    forecasts: model.forecasts.length,
-    challenges: model.challenges.length,
-    appeals: model.appeals.length,
+    claims: summary.counts.claims,
+    artifacts: summary.counts.artifacts,
+    replications: summary.counts.replications,
+    checkpoints: summary.counts.checkpoints,
+    agents: summary.counts.agents,
+    forecasts: summary.counts.forecasts,
+    challenges: summary.counts.challenges,
+    appeals: summary.counts.appeals,
   };
 }
 

@@ -170,7 +170,7 @@ async function deployGovernanceProtocol() {
   await (await accessController.revokeRole(ROLE("PARAMETER_ADMIN_ROLE"), admin.address)).wait();
   await (await accessController.revokeRole(ROLE("MODULE_ADMIN_ROLE"), admin.address)).wait();
   await (await accessController.revokeRole(defaultAdminRole, admin.address)).wait();
-  await (await timelock.renounceRole(await timelock.TIMELOCK_ADMIN_ROLE(), admin.address)).wait();
+  await (await timelock.renounceRole(await timelock.DEFAULT_ADMIN_ROLE(), admin.address)).wait();
 
   return {
     accessController,
@@ -313,7 +313,7 @@ describe("ProtocolGovernance", () => {
       protocol.treasury
         .connect(protocol.voter)
         .releaseEther(protocol.recipient.address, ethers.parseEther("0.1")),
-      /Ownable: caller is not the owner/,
+      /OwnableUnauthorizedAccount/,
     );
 
     assert.equal(await protocol.treasury.owner(), await protocol.timelock.getAddress());
@@ -344,7 +344,7 @@ describe("ProtocolGovernance", () => {
       protocol.governor
         .connect(protocol.lowVotesHolder)
         .propose(targets, values, calldatas, description),
-      /Governor: proposer votes below proposal threshold/,
+      /GovernorInsufficientProposerVotes/,
     );
 
     await (
@@ -359,7 +359,7 @@ describe("ProtocolGovernance", () => {
 
     await assert.rejects(
       protocol.governor.execute(targets, values, calldatas, descriptionHash),
-      /TimelockController: operation is not ready/,
+      /TimelockUnexpectedOperationState/,
     );
   });
 });

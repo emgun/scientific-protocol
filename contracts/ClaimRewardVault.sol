@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {AccessManaged} from "./utils/AccessManaged.sol";
-import {SimpleReentrancyGuard} from "./utils/SimpleReentrancyGuard.sol";
+import {DepositPausable} from "./utils/DepositPausable.sol";
 import {ProtocolRoles} from "./libraries/ProtocolRoles.sol";
 import {IAgentRegistry} from "./interfaces/IAgentRegistry.sol";
 import {IClaimRegistry} from "./interfaces/IClaimRegistry.sol";
@@ -10,7 +11,7 @@ import {IClaimRegistry} from "./interfaces/IClaimRegistry.sol";
 /// @title ClaimRewardVault
 /// @notice Holds claim-scoped reward pools across protocol work classes and accrues pull-based value over time.
 /// @dev Heavy evidence and settlement policy stay offchain, while reward balances and pool depletion stay onchain.
-contract ClaimRewardVault is AccessManaged, SimpleReentrancyGuard {
+contract ClaimRewardVault is DepositPausable, ReentrancyGuard {
     error ClaimRewardVaultUnknownClaim(uint256 claimId);
     error ClaimRewardVaultUnknownAgent(uint256 agentId);
     error ClaimRewardVaultInactiveAgent(uint256 agentId);
@@ -71,7 +72,10 @@ contract ClaimRewardVault is AccessManaged, SimpleReentrancyGuard {
 
     /// @notice Funds a claim-local reward pool for one work class.
     /// @dev Open funding is the first market signal for how much attention a claim or work class deserves.
-    function fundClaimRewards(uint256 claimId, uint8 workKind) external payable {
+    function fundClaimRewards(
+        uint256 claimId,
+        uint8 workKind
+    ) external payable whenDepositsNotPaused {
         if (!claimRegistry.claimExists(claimId)) {
             revert ClaimRewardVaultUnknownClaim(claimId);
         }

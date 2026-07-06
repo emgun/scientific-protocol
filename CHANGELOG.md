@@ -16,6 +16,10 @@ All notable changes to the `scientific-protocol` package are documented here. Th
 
 ## [Unreleased]
 
+Protocol source code for the changes below landed in this repository on 2026-07-06; this
+repository is now the protocol source of truth (product/operator code lives in the private
+`scientific-product` repository).
+
 ### ABI changes (integrator action required on next deployment)
 
 - Access control is now OpenZeppelin `AccessControl`: `renounceRole` takes

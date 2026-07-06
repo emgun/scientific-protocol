@@ -18,6 +18,9 @@ import {
   upsertSourceRecord,
 } from "../src/sources/store.js";
 import type { SourceExtractionCandidate } from "../src/sources/types.js";
+import { probeDatabase } from "./helpers/database-availability.js";
+
+const database = await probeDatabase();
 
 function makeStubIngestionResult(sourceLocator: string): ArtifactIngestionResult {
   const digest = (suffix: string) =>
@@ -65,7 +68,7 @@ function makeStubIngestionResult(sourceLocator: string): ArtifactIngestionResult
   };
 }
 
-describe("source ingress", () => {
+describe("source ingress", { skip: database.skipReason }, () => {
   it("parses source publication domain ids explicitly", () => {
     expect(sourcePublicationDomainId({})).to.equal(1);
     expect(sourcePublicationDomainId({ domainId: "   " })).to.equal(1);

@@ -2,7 +2,6 @@
 pragma solidity ^0.8.24;
 
 import {Governor} from "@openzeppelin/contracts/governance/Governor.sol";
-import {IGovernor} from "@openzeppelin/contracts/governance/IGovernor.sol";
 import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 import {GovernorCountingSimple} from "@openzeppelin/contracts/governance/extensions/GovernorCountingSimple.sol";
 import {GovernorSettings} from "@openzeppelin/contracts/governance/extensions/GovernorSettings.sol";
@@ -27,8 +26,8 @@ contract ProtocolGovernor is
         string memory name_,
         IVotes votingToken,
         TimelockController timelockController,
-        uint256 initialVotingDelay,
-        uint256 initialVotingPeriod,
+        uint48 initialVotingDelay,
+        uint32 initialVotingPeriod,
         uint256 initialProposalThreshold,
         uint256 initialQuorumNumerator
     )
@@ -40,19 +39,19 @@ contract ProtocolGovernor is
     {}
 
     /// @notice Returns the number of blocks between proposal creation and voting activation.
-    function votingDelay() public view override(IGovernor, GovernorSettings) returns (uint256) {
+    function votingDelay() public view override(Governor, GovernorSettings) returns (uint256) {
         return super.votingDelay();
     }
 
     /// @notice Returns the number of blocks that a proposal stays open for voting.
-    function votingPeriod() public view override(IGovernor, GovernorSettings) returns (uint256) {
+    function votingPeriod() public view override(Governor, GovernorSettings) returns (uint256) {
         return super.votingPeriod();
     }
 
     /// @notice Returns the quorum threshold at a past voting timepoint.
     function quorum(
         uint256 timepoint
-    ) public view override(IGovernor, GovernorVotesQuorumFraction) returns (uint256) {
+    ) public view override(Governor, GovernorVotesQuorumFraction) returns (uint256) {
         return super.quorum(timepoint);
     }
 
@@ -74,21 +73,32 @@ contract ProtocolGovernor is
     }
 
     /// @inheritdoc Governor
-    function supportsInterface(
-        bytes4 interfaceId
+    function proposalNeedsQueuing(
+        uint256 proposalId
     ) public view override(Governor, GovernorTimelockControl) returns (bool) {
-        return super.supportsInterface(interfaceId);
+        return super.proposalNeedsQueuing(proposalId);
     }
 
     /// @inheritdoc Governor
-    function _execute(
+    function _queueOperations(
+        uint256 proposalId,
+        address[] memory targets,
+        uint256[] memory values,
+        bytes[] memory calldatas,
+        bytes32 descriptionHash
+    ) internal override(Governor, GovernorTimelockControl) returns (uint48) {
+        return super._queueOperations(proposalId, targets, values, calldatas, descriptionHash);
+    }
+
+    /// @inheritdoc Governor
+    function _executeOperations(
         uint256 proposalId,
         address[] memory targets,
         uint256[] memory values,
         bytes[] memory calldatas,
         bytes32 descriptionHash
     ) internal override(Governor, GovernorTimelockControl) {
-        super._execute(proposalId, targets, values, calldatas, descriptionHash);
+        super._executeOperations(proposalId, targets, values, calldatas, descriptionHash);
     }
 
     /// @inheritdoc Governor

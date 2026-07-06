@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {AccessManaged} from "./utils/AccessManaged.sol";
-import {SimpleReentrancyGuard} from "./utils/SimpleReentrancyGuard.sol";
+import {DepositPausable} from "./utils/DepositPausable.sol";
 import {ProtocolRoles} from "./libraries/ProtocolRoles.sol";
 import {ProtocolTypes} from "./libraries/ProtocolTypes.sol";
 import {IClaimRegistry} from "./interfaces/IClaimRegistry.sol";
@@ -10,7 +11,7 @@ import {IAgentRegistry} from "./interfaces/IAgentRegistry.sol";
 import {IEpistemicMarket} from "./interfaces/IEpistemicMarket.sol";
 import {IReplicationRegistry} from "./interfaces/IReplicationRegistry.sol";
 
-contract EpistemicMarket is AccessManaged, SimpleReentrancyGuard, IEpistemicMarket {
+contract EpistemicMarket is DepositPausable, ReentrancyGuard, IEpistemicMarket {
     error EpistemicMarketUnknownClaim(uint256 claimId);
     error EpistemicMarketUnknownForecast(uint256 forecastId);
     error EpistemicMarketUnknownChallenge(uint256 challengeId);
@@ -134,7 +135,10 @@ contract EpistemicMarket is AccessManaged, SimpleReentrancyGuard, IEpistemicMark
     }
 
     /// @notice Funds the shared bonus pool used to reward calibrated forecasts and sustained challenges.
-    function fundRewardPool() external payable {
+    /// @dev The pool is deliberately one-way: value leaves only through matched-forecast bonuses
+    /// and sustained-challenge bonuses. There is no governance drain path, so funders know
+    /// forfeited stakes and dismissed bonds can only ever subsidize future correct participation.
+    function fundRewardPool() external payable whenDepositsNotPaused {
         if (msg.value == 0) {
             revert EpistemicMarketInvalidAmount(msg.value);
         }
@@ -149,7 +153,7 @@ contract EpistemicMarket is AccessManaged, SimpleReentrancyGuard, IEpistemicMark
         bytes32 commitmentHash,
         uint64 revealDeadline,
         uint256 agentId
-    ) external payable returns (uint256 forecastId) {
+    ) external payable whenDepositsNotPaused returns (uint256 forecastId) {
         if (!claimRegistry.claimExists(claimId)) {
             revert EpistemicMarketUnknownClaim(claimId);
         }
@@ -308,7 +312,7 @@ contract EpistemicMarket is AccessManaged, SimpleReentrancyGuard, IEpistemicMark
         bytes32 evidenceHash,
         string calldata evidenceURI,
         uint256 agentId
-    ) external payable returns (uint256 challengeId) {
+    ) external payable whenDepositsNotPaused returns (uint256 challengeId) {
         if (!claimRegistry.claimExists(claimId)) {
             revert EpistemicMarketUnknownClaim(claimId);
         }

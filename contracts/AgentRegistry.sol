@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {AccessManaged} from "./utils/AccessManaged.sol";
-import {SimpleReentrancyGuard} from "./utils/SimpleReentrancyGuard.sol";
+import {DepositPausable} from "./utils/DepositPausable.sol";
 import {ProtocolRoles} from "./libraries/ProtocolRoles.sol";
 import {IAgentRegistry} from "./interfaces/IAgentRegistry.sol";
 
-contract AgentRegistry is AccessManaged, SimpleReentrancyGuard, IAgentRegistry {
+contract AgentRegistry is DepositPausable, ReentrancyGuard, IAgentRegistry {
     error AgentRegistryUnknownAgent(uint256 agentId);
     error AgentRegistryUnauthorizedAgent(uint256 agentId, address actor);
     error AgentRegistryInvalidAmount(uint256 amount);
@@ -68,7 +69,7 @@ contract AgentRegistry is AccessManaged, SimpleReentrancyGuard, IAgentRegistry {
         bytes32 metadataHash,
         string calldata uri,
         uint256 spendLimit
-    ) external payable returns (uint256 agentId) {
+    ) external payable whenDepositsNotPaused returns (uint256 agentId) {
         agentId = nextAgentId++;
 
         _agents[agentId] = AgentRecord({
@@ -110,7 +111,7 @@ contract AgentRegistry is AccessManaged, SimpleReentrancyGuard, IAgentRegistry {
     /// @notice Funds an existing agent budget without requiring operator-only custody.
     /// @dev Used by operators, funders, and protocol-native reward layers alike to stream value
     /// directly into agent capacity.
-    function fundAgentBudget(uint256 agentId) external payable nonReentrant {
+    function fundAgentBudget(uint256 agentId) external payable nonReentrant whenDepositsNotPaused {
         AgentRecord storage agent = _agents[agentId];
         if (agent.agentId == 0) {
             revert AgentRegistryUnknownAgent(agentId);

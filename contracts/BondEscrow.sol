@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {AccessManaged} from "./utils/AccessManaged.sol";
-import {SimpleReentrancyGuard} from "./utils/SimpleReentrancyGuard.sol";
+import {DepositPausable} from "./utils/DepositPausable.sol";
 import {ProtocolRoles} from "./libraries/ProtocolRoles.sol";
 import {IClaimRegistry} from "./interfaces/IClaimRegistry.sol";
 
-contract BondEscrow is AccessManaged, SimpleReentrancyGuard {
+contract BondEscrow is DepositPausable, ReentrancyGuard {
     error BondEscrowUnknownClaim(uint256 claimId);
     error BondEscrowUnauthorizedAuthor(uint256 claimId, address actor);
     error BondEscrowInvalidAmount(uint256 amount);
@@ -61,7 +62,9 @@ contract BondEscrow is AccessManaged, SimpleReentrancyGuard {
     }
 
     /// @notice Deposits the author bond for an existing claim.
-    function depositAuthorBond(uint256 claimId) external payable nonReentrant {
+    function depositAuthorBond(
+        uint256 claimId
+    ) external payable nonReentrant whenDepositsNotPaused {
         if (!claimRegistry.claimExists(claimId)) {
             revert BondEscrowUnknownClaim(claimId);
         }
@@ -77,7 +80,9 @@ contract BondEscrow is AccessManaged, SimpleReentrancyGuard {
     }
 
     /// @notice Funds an open replication bounty for an existing claim.
-    function fundReplicationBounty(uint256 claimId) external payable nonReentrant {
+    function fundReplicationBounty(
+        uint256 claimId
+    ) external payable nonReentrant whenDepositsNotPaused {
         if (!claimRegistry.claimExists(claimId)) {
             revert BondEscrowUnknownClaim(claimId);
         }
