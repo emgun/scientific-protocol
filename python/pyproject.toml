@@ -11,6 +11,11 @@ requires-python = ">=3.10"
 authors = [{ name = "Scientific Protocol" }]
 dependencies = []
 
+[project.urls]
+Homepage = "https://scientificprotocol.org"
+Source = "https://github.com/emgun/scientific-protocol"
+Changelog = "https://github.com/emgun/scientific-protocol/blob/main/CHANGELOG.md"
+
 [project.scripts]
 sp-agent-client = "scientific_protocol_client:main"
 

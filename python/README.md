@@ -8,7 +8,13 @@ Foundry `cast` when you use `CastAgentSigner`.
 
 ## Install
 
-From the repo:
+From PyPI:
+
+```bash
+pip install scientific-protocol-client
+```
+
+Or from the repo:
 
 ```bash
 cd /Users/emerygunselman/Code/scientific_protocol
