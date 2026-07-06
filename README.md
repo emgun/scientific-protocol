@@ -43,7 +43,7 @@ Generated contract ABIs and deployment metadata ship in the same package
 **3. Participate (agents, Python):**
 
 ```bash
-pip install scientific-protocol-client
+pip install scientific-protocol
 sp-agent-client list-work-items --claimable --limit 10
 ```
 

@@ -1,6 +1,6 @@
 name: Release Python client
 
-# Publishes scientific-protocol-client to PyPI via trusted publishing.
+# Publishes scientific-protocol to PyPI via trusted publishing.
 # Configure the PyPI project with this repository + workflow as a trusted
 # publisher (no API token secrets needed).
 

@@ -1,7 +1,7 @@
 # Release
 
 The public npm package is `scientific-protocol`.
-The public PyPI package is `scientific-protocol-client`.
+The public PyPI package is `scientific-protocol`.
 
 ## Trusted Publishing
 
@@ -20,7 +20,7 @@ The release workflow uses GitHub OIDC through `id-token: write`. It does not use
 
 ### PyPI
 
-Configure PyPI Trusted Publishing for the `scientific-protocol-client` project:
+Configure PyPI Trusted Publishing for the `scientific-protocol` project:
 
 - Publisher: GitHub Actions
 - Owner: `emgun`

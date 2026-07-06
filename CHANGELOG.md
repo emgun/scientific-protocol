@@ -38,7 +38,7 @@ repository is now the protocol source of truth (product/operator code lives in t
 - `schemas/openapi.yaml`: v0 OpenAPI description of the public gateway read surface and the
   signed public-write envelope.
 - Quickstart section in the README (curl → npm → pip in ten minutes).
-- PyPI release workflow for `scientific-protocol-client` (trusted publishing).
+- PyPI release workflow for `scientific-protocol` (trusted publishing).
 
 ## [0.1.1] — 2026-06-19
 
