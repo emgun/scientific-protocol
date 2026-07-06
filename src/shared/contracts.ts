@@ -1,4 +1,10 @@
-import { Contract, type ContractRunner, type InterfaceAbi, JsonRpcProvider } from "ethers";
+import {
+  Contract,
+  type ContractRunner,
+  type InterfaceAbi,
+  JsonRpcProvider,
+  keccak256,
+} from "ethers";
 import { generatedContractArtifacts } from "../generated/contracts.js";
 import { type EnvRecord, readEnvValue } from "./secrets.js";
 
@@ -50,8 +56,39 @@ export function getRpcUrl(env: EnvRecord = process.env): string {
   return readEnvValue(env, "SP_RPC_URL") ?? "http://127.0.0.1:8545";
 }
 
+function isAlreadyKnownSendError(error: unknown): boolean {
+  const candidate = error as {
+    error?: { code?: number; message?: string };
+    message?: string;
+  } | null;
+  const message = `${candidate?.error?.message ?? ""} ${candidate?.message ?? ""}`.toLowerCase();
+  return message.includes("already known");
+}
+
+/// JsonRpcProvider that treats an "already known" eth_sendRawTransaction reply
+/// as success. Some nodes return that error when a broadcast is retried for a
+/// transaction already in their mempool; the transaction hash is deterministic
+/// from the raw payload, so the correct behavior is to return it and let the
+/// caller wait for the receipt instead of aborting a long transaction sequence.
+class ResilientJsonRpcProvider extends JsonRpcProvider {
+  override async send(method: string, params: Array<unknown>): Promise<unknown> {
+    try {
+      return await super.send(method, params);
+    } catch (error) {
+      if (
+        method === "eth_sendRawTransaction" &&
+        typeof params[0] === "string" &&
+        isAlreadyKnownSendError(error)
+      ) {
+        return keccak256(params[0]);
+      }
+      throw error;
+    }
+  }
+}
+
 export function getProvider(rpcUrl = getRpcUrl()): JsonRpcProvider {
-  return new JsonRpcProvider(rpcUrl);
+  return new ResilientJsonRpcProvider(rpcUrl);
 }
 
 export function extractContractEventId(
