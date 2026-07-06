@@ -1,19 +1,42 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "scientific-protocol-client"
 version = "0.1.0"
-description = "Python client and operator CLI for the Scientific Protocol hybrid agent runtime."
+description = "Python client and operator CLI for Scientific Protocol."
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Scientific Protocol" }]
+license = "MIT"
+keywords = [
+  "ethereum",
+  "protocol",
+  "replication",
+  "science",
+  "scientific-computing",
+  "web3",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
 dependencies = []
 
 [project.urls]
 Homepage = "https://scientificprotocol.org"
-Source = "https://github.com/emgun/scientific-protocol"
+Documentation = "https://scientificprotocol.org"
+Repository = "https://github.com/emgun/scientific-protocol"
+Issues = "https://github.com/emgun/scientific-protocol/issues"
 Changelog = "https://github.com/emgun/scientific-protocol/blob/main/CHANGELOG.md"
 
 [project.scripts]

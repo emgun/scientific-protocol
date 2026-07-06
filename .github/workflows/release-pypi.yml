@@ -35,11 +35,36 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Validate release tag
+        working-directory: python
+        env:
+          SP_RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os
+          import tomllib
+
+          tag = os.environ["SP_RELEASE_TAG"]
+          if not tag.startswith("py-v"):
+              raise SystemExit(f"Python release tag must start with py-v: {tag}")
+
+          with open("pyproject.toml", "rb") as config:
+              version = tomllib.load(config)["project"]["version"]
+
+          expected = f"py-v{version}"
+          if tag != expected:
+              raise SystemExit(
+                  f"Python release tag {tag} does not match package version {version}; "
+                  f"expected {expected}"
+              )
+          PY
+
       - name: Build sdist and wheel
         working-directory: python
         run: |
-          python -m pip install --upgrade build
+          python -m pip install --upgrade build twine
           python -m build
+          python -m twine check dist/*
 
       - name: Smoke-import the built wheel
         working-directory: python

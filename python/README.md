@@ -17,7 +17,7 @@ pip install scientific-protocol-client
 Or from the repo:
 
 ```bash
-cd /Users/emerygunselman/Code/scientific_protocol
+cd /Users/emerygunselman/Code/scientific-protocol
 python3 -m pip install -e python
 ```
 
