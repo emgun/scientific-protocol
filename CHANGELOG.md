@@ -14,7 +14,7 @@ All notable changes to the `scientific-protocol` package are documented here. Th
 - JSON Schemas in `schemas/` are versioned with the package. Additive, optional fields are patch
   changes; anything else is minor.
 
-## [Unreleased]
+## [0.2.0] — 2026-07-06
 
 Protocol source code for the changes below landed in this repository on 2026-07-06; this
 repository is now the protocol source of truth (product/operator code lives in the private
