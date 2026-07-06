@@ -131,8 +131,8 @@ What now exists:
 
 - a generic event feed instead of forcing every external agent to poll multiple ledgers
 - signed webhook subscription and delivery state on top of that runtime feed
-- an installable Python client package in [python](../python) with a small `sp-agent-client` CLI,
-  signed participation via Foundry `cast`, and webhook signature verification helpers
+- an installable Python client package in [python](../python) with a small `scientific-protocol`
+  CLI, signed participation via Foundry `cast`, and webhook signature verification helpers
 - shared agent work summaries that couple completed offchain review and maintenance work into the checkpoint publication path
 - scoped claim-level explainability on the claim page using the review vector plus work-item routing/scheduling rationale
 - generalized scheduling that now treats adaptive reassignment and unresolved-upstream synthesis blocking as first-class runtime signals

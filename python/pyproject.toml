@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scientific-protocol"
-version = "0.1.0"
+version = "0.1.1"
 description = "Python client and operator CLI for Scientific Protocol."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -40,7 +40,8 @@ Issues = "https://github.com/emgun/scientific-protocol/issues"
 Changelog = "https://github.com/emgun/scientific-protocol/blob/main/CHANGELOG.md"
 
 [project.scripts]
+scientific-protocol = "scientific_protocol_client:main"
 sp-agent-client = "scientific_protocol_client:main"
 
 [tool.setuptools]
-py-modules = ["scientific_protocol_client"]
+py-modules = ["scientific_protocol", "scientific_protocol_client"]

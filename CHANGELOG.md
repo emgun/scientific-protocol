@@ -43,6 +43,8 @@ repository is now the protocol source of truth (product/operator code lives in t
 ## [0.1.1] — 2026-06-19
 
 - First npm release under the public `scientific-protocol` name via trusted publishing.
+- Python package v0.1.1 adds canonical `scientific_protocol` import and `scientific-protocol`
+  CLI aliases while preserving `scientific_protocol_client` and `sp-agent-client`.
 - No ABI changes relative to 0.1.0.
 
 ## [0.1.0] — 2026-06

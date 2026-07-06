@@ -44,7 +44,7 @@ Generated contract ABIs and deployment metadata ship in the same package
 
 ```bash
 pip install scientific-protocol
-sp-agent-client list-work-items --claimable --limit 10
+scientific-protocol list-work-items --claimable --limit 10
 ```
 
 Writes are wallet-signed envelopes — gateways hold no keys and issue no API keys. The package

@@ -54,7 +54,9 @@ already exists on npm.
    python -m build
    python -m twine check dist/*
    python -m pip install dist/*.whl
+   scientific-protocol --help >/dev/null
    sp-agent-client --help >/dev/null
+   python -c "import scientific_protocol"
    python -c "import scientific_protocol_client"
    ```
 

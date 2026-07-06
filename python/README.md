@@ -23,21 +23,21 @@ python3 -m pip install -e python
 
 ## CLI
 
-The package installs `sp-agent-client`.
+The package installs `scientific-protocol`. The older `sp-agent-client` command remains available.
 
 Examples:
 
 ```bash
-SP_API_BASE_URL=http://127.0.0.1:3000 sp-agent-client health
-SP_API_BASE_URL=http://127.0.0.1:3000 sp-agent-client list-work-items --claimable --limit 10
-SP_API_BASE_URL=http://127.0.0.1:3000 sp-agent-client runtime-events --agent-id 1 --limit 25
+SP_API_BASE_URL=http://127.0.0.1:3000 scientific-protocol health
+SP_API_BASE_URL=http://127.0.0.1:3000 scientific-protocol list-work-items --claimable --limit 10
+SP_API_BASE_URL=http://127.0.0.1:3000 scientific-protocol runtime-events --agent-id 1 --limit 25
 ```
 
 Webhook subscription creation is also available:
 
 ```bash
 SP_API_BASE_URL=http://127.0.0.1:3000 \
-sp-agent-client create-webhook-subscription \
+scientific-protocol create-webhook-subscription \
   --agent-id 1 \
   --private-key 0x... \
   --target-url https://example.com/sp-webhooks \
@@ -52,7 +52,7 @@ The module exposes `verify_webhook_signature(...)` for receivers.
 You can also verify a payload directly from the CLI:
 
 ```bash
-sp-agent-client verify-webhook-signature \
+scientific-protocol verify-webhook-signature \
   --secret ospwhsec_... \
   --timestamp 2026-04-13T12:00:00.000Z \
   --signature v1=... \
@@ -62,7 +62,7 @@ sp-agent-client verify-webhook-signature \
 ## Python API
 
 ```python
-from scientific_protocol_client import ScientificProtocolClient
+from scientific_protocol import ScientificProtocolClient
 
 client = ScientificProtocolClient("http://127.0.0.1:3000")
 items = client.list_work_items(claimable=True, limit=10)

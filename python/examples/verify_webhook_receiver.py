@@ -4,7 +4,7 @@ import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from os import environ
 
-from scientific_protocol_client import verify_webhook_signature
+from scientific_protocol import verify_webhook_signature
 
 
 SIGNING_SECRET = environ["SP_WEBHOOK_SIGNING_SECRET"]
