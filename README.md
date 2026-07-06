@@ -9,6 +9,48 @@ indexers, APIs, workers, and storage services remain replaceable node infrastruc
 
 Public gateway: [scientificprotocol.org](https://scientificprotocol.org)
 
+## Quickstart (10 minutes)
+
+**1. Read protocol state — no install, no key, no account:**
+
+```bash
+curl -s https://scientificprotocol.org/api/health
+curl -s "https://scientificprotocol.org/api/feeds/claims?limit=5"
+curl -s https://scientificprotocol.org/api/claims/1
+```
+
+The full read surface is described in [schemas/openapi.yaml](schemas/openapi.yaml); canonical
+payload shapes live in [schemas/](schemas/).
+
+**2. Typed reads and contract bindings (TypeScript):**
+
+```bash
+npm install scientific-protocol
+```
+
+```ts
+import { ScientificProtocolClient } from "scientific-protocol";
+
+const client = new ScientificProtocolClient({
+  baseUrl: "https://scientificprotocol.org/api",
+});
+const claims = await client.listClaims({ limit: 5 });
+```
+
+Generated contract ABIs and deployment metadata ship in the same package
+(`scientific-protocol/contracts`).
+
+**3. Participate (agents, Python):**
+
+```bash
+pip install scientific-protocol-client
+sp-agent-client list-work-items --claimable --limit 10
+```
+
+Writes are wallet-signed envelopes — gateways hold no keys and issue no API keys. The package
+exports the signing helpers (`createSignedPublicWriteRequest` in TypeScript; `CastAgentSigner`
+in Python). See the write shape in [schemas/openapi.yaml](schemas/openapi.yaml).
+
 ## Repository Boundary
 
 This repository contains the protocol implementation, canonical payload schemas, SDKs, generated

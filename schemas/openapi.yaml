@@ -1,0 +1,254 @@
+openapi: 3.1.0
+info:
+  title: Scientific Protocol Read API
+  version: 0.1.0
+  description: |
+    Public read surface of a Scientific Protocol gateway, plus the shape of the
+    signed public-write envelope. This is a v0 contract document: it names the
+    stable public endpoints, their query parameters, and the top-level response
+    shapes. Field-level payload schemas for protocol objects are published as
+    JSON Schemas alongside this file (see `schemas/*.schema.json` in the
+    `scientific-protocol` package) and take precedence for object fields.
+
+    Reads are unauthenticated. Writes are wallet-signed envelopes; no API keys
+    exist and gateways hold no user keys. Endpoints under /demo and /admin are
+    operator/sandbox surfaces and are intentionally not part of this contract.
+servers:
+  - url: https://scientificprotocol.org/api
+    description: Public gateway
+  - url: http://127.0.0.1:3000
+    description: Local stack (npm run mvp:local)
+tags:
+  - name: system
+  - name: claims
+  - name: sources
+  - name: participation
+  - name: governance
+  - name: writes
+
+paths:
+  /health:
+    get:
+      tags: [system]
+      summary: Gateway liveness and sync status
+      responses:
+        "200":
+          description: Gateway is serving.
+          content:
+            application/json:
+              schema: { type: object }
+  /beta/snapshot:
+    get:
+      tags: [system]
+      summary: Machine-readable beta deployment snapshot (chain, addresses, surfaces)
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+  /write-config:
+    get:
+      tags: [system]
+      summary: Public write configuration for direct browser-wallet submission
+      description: Chain id, RPC URL, contract addresses, and enabled write actions.
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+
+  /claims:
+    get:
+      tags: [claims]
+      summary: List claims
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+        - { name: domainId, in: query, schema: { type: integer } }
+        - { name: status, in: query, schema: { type: integer } }
+        - { name: author, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Page of claims when any filter/pagination parameter is present; full list otherwise.
+          content:
+            application/json:
+              schema: { type: object }
+  /claims/{claimId}:
+    get:
+      tags: [claims]
+      summary: Claim lifecycle detail
+      parameters:
+        - { name: claimId, in: path, required: true, schema: { type: integer } }
+        - name: view
+          in: query
+          description: "`summary` returns the claim row plus collection counts; default returns the full lifecycle view."
+          schema: { type: string, enum: [summary, full] }
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /feeds/claims:
+    get:
+      tags: [claims]
+      summary: Claim feed (public, paginated)
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+        - { name: domainId, in: query, schema: { type: integer } }
+        - { name: status, in: query, schema: { type: integer } }
+        - { name: machineProposed, in: query, schema: { type: boolean } }
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+  /events/claims:
+    get:
+      tags: [claims]
+      summary: Claim lifecycle events
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+        - { name: claimId, in: query, schema: { type: string } }
+        - { name: domainId, in: query, schema: { type: integer } }
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+
+  /sources:
+    get:
+      tags: [sources]
+      summary: List canonical source records
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+  /feeds/sources:
+    get:
+      tags: [sources]
+      summary: Source feed (public, paginated)
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+  /events/sources:
+    get:
+      tags: [sources]
+      summary: Source lifecycle events
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+
+  /replications:
+    get:
+      tags: [participation]
+      summary: List replication records
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+  /checkpoints:
+    get:
+      tags: [participation]
+      summary: List reputation checkpoints
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+  /agents:
+    get:
+      tags: [participation]
+      summary: List registered agents
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+  /artifacts:
+    get:
+      tags: [participation]
+      summary: List artifact commitments and persistence state
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+  /forecasts:
+    get:
+      tags: [participation]
+      summary: List epistemic-market forecasts
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+  /challenges:
+    get:
+      tags: [participation]
+      summary: List epistemic-market challenges
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+  /appeals:
+    get:
+      tags: [participation]
+      summary: List appeals
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+  /work-items:
+    get:
+      tags: [participation]
+      summary: List work items (review, replication, maintenance, extraction)
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - { name: claimable, in: query, schema: { type: boolean } }
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+
+  /governance/proposals:
+    get:
+      tags: [governance]
+      summary: List governance proposals
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+  /governance/treasury:
+    get:
+      tags: [governance]
+      summary: Treasury balances and flows
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+  /governance/events:
+    get:
+      tags: [governance]
+      summary: Governance event history
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+
+  /sources#post:
+    post:
+      tags: [writes]
+      summary: Submit a source (signed public write)
+      description: |
+        All public writes share one shape: a typed envelope plus an EIP-191
+        signature from the submitting wallet. The envelope binds action type,
+        payload digest, timestamp, and replay-protection nonce. Signing helpers
+        are exported by the `scientific-protocol` npm package
+        (`createSignedPublicWriteRequest`) and the Python client.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignedWriteRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+        "401": { description: Signature or envelope rejected. }
+        "429": { description: Rate limited. }
+
+components:
+  parameters:
+    limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1 }
+    offset:
+      name: offset
+      in: query
+      schema: { type: integer, minimum: 0 }
+  responses:
+    JsonObject:
+      description: JSON object; field-level shapes are defined by the protocol JSON Schemas.
+      content:
+        application/json:
+          schema: { type: object }
+    NotFound:
+      description: Object does not exist.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string }
+  schemas:
+    SignedWriteRequest:
+      type: object
+      required: [envelope, signature]
+      properties:
+        envelope:
+          type: object
+          description: Typed public-write envelope (action, payload, timestamp, nonce).
+        signature:
+          type: string
+          description: EIP-191 signature of the envelope hash by the submitting wallet.
