@@ -1,0 +1,47 @@
+name: Gateway smoke
+
+# Verifies that every live-gateway command promised by the README Quickstart
+# actually works, daily and on demand. If the quickstart section changes, this
+# workflow must change with it — the README explicitly points here.
+
+on:
+  schedule:
+    - cron: "17 9 * * *"
+  workflow_dispatch:
+  push:
+    paths:
+      - "README.md"
+      - ".github/workflows/gateway-smoke.yml"
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Quickstart endpoints respond
+        run: |
+          set -euo pipefail
+          base="https://scientificprotocol.org/api"
+          fail=0
+          for path in /health /beta/snapshot /write-config; do
+            code=$(curl -sS -m 15 -o /tmp/body -w '%{http_code}' "$base$path")
+            if [ "$code" != "200" ]; then
+              echo "FAIL $path -> HTTP $code"
+              fail=1
+            elif ! head -c1 /tmp/body | grep -q '{'; then
+              echo "FAIL $path -> non-JSON body"
+              fail=1
+            else
+              echo "ok   $path"
+            fi
+          done
+          exit "$fail"
+
+      - name: Health reports serving
+        run: |
+          set -euo pipefail
+          curl -sS -m 15 https://scientificprotocol.org/api/health | python3 -c "
+          import json,sys
+          body = json.load(sys.stdin)
+          print(json.dumps(body, indent=2))
+          "

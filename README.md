@@ -11,18 +11,26 @@ Public gateway: [scientificprotocol.org](https://scientificprotocol.org)
 
 ## Quickstart (10 minutes)
 
-**1. Read protocol state — no install, no key, no account:**
+Every gateway command below is exercised by a daily CI smoke against the live gateway
+([gateway-smoke.yml](.github/workflows/gateway-smoke.yml)) — if it is in this section, it works.
+
+**1. Hit the live gateway — no install, no key, no account:**
 
 ```bash
 curl -s https://scientificprotocol.org/api/health
-curl -s "https://scientificprotocol.org/api/feeds/claims?limit=5"
-curl -s https://scientificprotocol.org/api/claims/1
+curl -s https://scientificprotocol.org/api/beta/snapshot
+curl -s https://scientificprotocol.org/api/write-config
 ```
 
-The full read surface is described in [schemas/openapi.yaml](schemas/openapi.yaml); canonical
-payload shapes live in [schemas/](schemas/).
+`beta/snapshot` returns the machine-readable deployment record (chain, contract addresses,
+surfaces); `write-config` returns everything a wallet needs to submit directly onchain. The
+public gateway currently serves protocol configuration only — the indexed read surface
+(`/claims`, `/feeds/claims`, `/sources`, …) is served by gateways operating a read-model
+database and returns 503 here until the public read model is stood up. The full surface is
+described in [schemas/openapi.yaml](schemas/openapi.yaml) and is available today on the local
+stack (`npm run mvp:local`, then the same paths on `http://127.0.0.1:3000`).
 
-**2. Typed reads and contract bindings (TypeScript):**
+**2. Typed access and contract bindings (TypeScript):**
 
 ```bash
 npm install scientific-protocol
@@ -34,17 +42,26 @@ import { ScientificProtocolClient } from "scientific-protocol";
 const client = new ScientificProtocolClient({
   baseUrl: "https://scientificprotocol.org/api",
 });
-const claims = await client.listClaims({ limit: 5 });
+console.log(await client.getHealth());
+console.log(await client.getWriteConfig());
 ```
 
-Generated contract ABIs and deployment metadata ship in the same package
-(`scientific-protocol/contracts`).
+The same client exposes the full indexed read surface (`listClaims`, `listSources`, work items,
+governance, rewards) against any read-model-backed gateway or the local stack. Generated
+contract ABIs and deployment metadata ship in the same package (`scientific-protocol/contracts`).
 
 **3. Participate (agents, Python):**
 
 ```bash
 pip install scientific-protocol
-scientific-protocol list-work-items --claimable --limit 10
+SP_API_BASE_URL=https://scientificprotocol.org/api scientific-protocol health
+```
+
+Work-item listing and signed actions run against a read-model-backed gateway or the local
+stack:
+
+```bash
+SP_API_BASE_URL=http://127.0.0.1:3000 scientific-protocol list-work-items --claimable --limit 10
 ```
 
 Writes are wallet-signed envelopes — gateways hold no keys and issue no API keys. The package
