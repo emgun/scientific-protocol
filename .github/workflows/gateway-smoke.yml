@@ -23,12 +23,12 @@ jobs:
           set -euo pipefail
           base="https://scientificprotocol.org/api"
           fail=0
-          for path in /health /beta/snapshot /write-config; do
+          for path in /health /beta/snapshot /write-config "/feeds/claims?limit=5" /claims "/work-items?limit=5"; do
             code=$(curl -sS -m 15 -o /tmp/body -w '%{http_code}' "$base$path")
             if [ "$code" != "200" ]; then
               echo "FAIL $path -> HTTP $code"
               fail=1
-            elif ! head -c1 /tmp/body | grep -q '{'; then
+            elif ! head -c1 /tmp/body | grep -qE '\{|\['; then
               echo "FAIL $path -> non-JSON body"
               fail=1
             else
