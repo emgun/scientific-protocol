@@ -3026,6 +3026,42 @@ describe("ApiServer", () => {
     }
   });
 
+  it("gates cron GET /admin/sync behind CRON_SECRET", async () => {
+    const { baseUrl, close } = await startServer({}, { env: { CRON_SECRET: "cron-test-secret" } });
+
+    try {
+      const missing = await fetch(`${baseUrl}/admin/sync`);
+      expect(missing.status).to.equal(401);
+
+      const wrong = await fetch(`${baseUrl}/admin/sync`, {
+        headers: { authorization: "Bearer nope" },
+      });
+      expect(wrong.status).to.equal(401);
+
+      const authorized = await fetch(`${baseUrl}/admin/sync`, {
+        headers: { authorization: "Bearer cron-test-secret" },
+      });
+      expect(authorized.status).to.equal(200);
+      const body = (await authorized.json()) as { ok: boolean };
+      expect(body.ok).to.equal(true);
+    } finally {
+      await close();
+    }
+  });
+
+  it("rejects cron GET /admin/sync when no CRON_SECRET is configured", async () => {
+    const { baseUrl, close } = await startServer({}, { env: {} });
+
+    try {
+      const response = await fetch(`${baseUrl}/admin/sync`, {
+        headers: { authorization: "Bearer anything" },
+      });
+      expect(response.status).to.equal(401);
+    } finally {
+      await close();
+    }
+  });
+
   it("maps sandbox reset contention to HTTP 409", async () => {
     const { baseUrl, close } = await startServer(
       {
