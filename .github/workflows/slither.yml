@@ -1,0 +1,41 @@
+name: Slither
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "contracts/**"
+      - "hardhat.config.ts"
+      - "package-lock.json"
+      - ".github/workflows/slither.yml"
+      - "slither.config.json"
+  pull_request:
+    paths:
+      - "contracts/**"
+      - "hardhat.config.ts"
+      - "package-lock.json"
+      - ".github/workflows/slither.yml"
+      - "slither.config.json"
+  workflow_dispatch:
+
+jobs:
+  slither:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Slither
+        uses: crytic/slither-action@v0.4.1
+        with:
+          fail-on: high
+          slither-config: slither.config.json
+          slither-args: --exclude-dependencies
