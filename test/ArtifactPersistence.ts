@@ -149,6 +149,41 @@ describe("ArtifactPersistence", () => {
     }
   });
 
+  it("persists artifacts to the filecoin backend with padding and provider metadata", async () => {
+    const uploads: Array<{ byteLength: number; contentType: string; filename: string }> = [];
+    const artifact = await persistJsonArtifact(
+      "test-filecoin",
+      { tiny: true },
+      {
+        backend: "filecoin",
+        filecoinClient: {
+          async uploadObject(input) {
+            uploads.push({
+              byteLength: input.bytes.byteLength,
+              contentType: input.contentType,
+              filename: input.filename,
+            });
+            return {
+              dataSetId: "77",
+              pieceCid: "bafkzcibtestpiece",
+              providerId: "4",
+              retrievalUrl: "https://provider.example/piece/bafkzcibtestpiece",
+            };
+          },
+        },
+      },
+    );
+
+    expect(uploads).to.have.length(1);
+    // Sub-minimum payloads are padded up to the provider floor.
+    expect(uploads[0]?.byteLength).to.equal(127);
+    expect(artifact.byteLength).to.equal(127);
+    expect(artifact.storagePath).to.equal("https://provider.example/piece/bafkzcibtestpiece");
+    const replica = artifact.replicas?.find((entry) => entry.isPrimary);
+    expect(replica?.providerMetadata?.provider).to.equal("filecoin-onchain-cloud");
+    expect(replica?.providerMetadata?.objectId).to.equal("bafkzcibtestpiece");
+  });
+
   it("persists and verifies binary artifacts on the filesystem backend", async () => {
     const tempRoot = await mkdtemp(path.join(os.tmpdir(), "sp-artifacts-binary-"));
     try {
