@@ -1,7 +1,7 @@
 import type { Pool } from "pg";
 import { upsertPersistedArtifact } from "../coordinator/store.js";
 import { getReadModelPath, syncReadModel } from "../indexer/projector.js";
-import { getDatabaseUrl } from "../indexer/store.js";
+import { getDatabaseUrl, ReadModelSyncInProgressError } from "../indexer/store.js";
 import { getDeploymentPath } from "../shared/deployment.js";
 import { createManagedOperatorSigner } from "../shared/operator.js";
 import { persistJsonArtifact } from "../shared/persisted-artifacts.js";
@@ -41,7 +41,25 @@ function metadataForSourcePublication(source: SourceRecordView, winner: SourceEx
 }
 
 async function syncPublicationClaimReadModel(env: NodeJS.ProcessEnv): Promise<void> {
-  await syncReadModel(getDeploymentPath(env), getReadModelPath(env), getDatabaseUrl(env), { env });
+  // The published claim must be indexed before source finalization: the
+  // source record's published_claim_id references the read-model claims
+  // table. A concurrent scheduled sync holds the advisory lock and will
+  // index the claim itself, so lock contention is retryable, not fatal —
+  // and it must never surface as a failure that tempts a retry of the
+  // onchain publication into a duplicate claim.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await syncReadModel(getDeploymentPath(env), getReadModelPath(env), getDatabaseUrl(env), {
+        env,
+      });
+      return;
+    } catch (error) {
+      if (!(error instanceof ReadModelSyncInProgressError) || attempt >= 12) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5_000));
+    }
+  }
 }
 
 async function persistSourceDecisionArtifact(
