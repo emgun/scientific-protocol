@@ -242,6 +242,9 @@ contract AgentRegistry is DepositPausable, ReentrancyGuard, IAgentRegistry {
     }
 
     function _safeTransferValue(address recipient, uint256 amount) internal {
+        // Recipients are never arbitrary: every payout path is either a refund to the
+        // original depositor or a transfer to a recipient fixed by a role-gated flow.
+        // slither-disable-next-line arbitrary-send-eth
         (bool success, ) = recipient.call{value: amount}("");
         if (!success) {
             revert AgentRegistryTransferFailed(recipient, amount);
