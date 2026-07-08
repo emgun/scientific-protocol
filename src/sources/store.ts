@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from "pg";
-import { createReadModelPool, DEFAULT_DATABASE_URL, migrateReadModelDb } from "../indexer/store.js";
+import { createReadModelPool, getDatabaseUrl, migrateReadModelDb } from "../indexer/store.js";
 import type {
   SourceExtractionCandidate,
   SourcePublicationCluster,
@@ -141,7 +141,7 @@ function mapSourceSubmissionRecordRow(row: SourceSubmissionRecordRow): SourceSub
 }
 
 export async function prepareSourceStore(
-  connectionString = DEFAULT_DATABASE_URL,
+  connectionString = getDatabaseUrl(),
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<Pool> {
   const pool = createReadModelPool(connectionString, env);

@@ -16,6 +16,12 @@ import {
   parseIpfsUrl,
 } from "./ipfs.js";
 import { readEnvValue } from "./secrets.js";
+import {
+  createDefaultFilecoinClient,
+  type FilecoinLikeClient,
+  padToFilecoinMinimum,
+  resolveFilecoinClientOptions,
+} from "./filecoin-artifacts.js";
 import { sha256Hex } from "./sha256.js";
 
 export { sha256Hex } from "./sha256.js";
@@ -98,7 +104,7 @@ export type PersistedArtifactRecord = {
   storagePath: string;
 };
 
-export type ArtifactPersistenceBackend = "filesystem" | "http" | "s3" | "gcs" | "ipfs";
+export type ArtifactPersistenceBackend = "filesystem" | "http" | "s3" | "gcs" | "ipfs" | "filecoin";
 
 export type S3LikeClient = {
   send(command: GetObjectCommand | PutObjectCommand): Promise<unknown>;
@@ -112,6 +118,7 @@ export type PersistedArtifactContentStream = {
 export type ArtifactPersistenceOptions = {
   backend?: ArtifactPersistenceBackend;
   env?: NodeJS.ProcessEnv;
+  filecoinClient?: FilecoinLikeClient;
   filesystemRoot?: string;
   gcsBucket?: string;
   gcsClient?: GcsLikeClient;
@@ -365,9 +372,12 @@ export function resolveArtifactPersistenceOptions(
       "s3",
       "gcs",
       "ipfs",
+      "filecoin",
     ]);
   return {
     backend: backend ?? "filesystem",
+    filecoinClient:
+      options.filecoinClient ?? createDefaultFilecoinClient(resolveFilecoinClientOptions(env)),
     filesystemRoot:
       options.filesystemRoot ??
       readEnvValue(env, "SP_ARTIFACT_FILESYSTEM_ROOT") ??
@@ -690,6 +700,53 @@ async function persistIpfsArtifact(
   };
 }
 
+async function persistFilecoinArtifact(
+  input: PersistedArtifactInput,
+  options: Pick<ResolvedArtifactPersistenceOptions, "filecoinClient">,
+): Promise<PersistArtifactBackendResult> {
+  const prepared = await prepareArtifactContent(input.content);
+  const rawBytes = prepared.filePath
+    ? await readFile(prepared.filePath)
+    : Buffer.from(prepared.body ?? Buffer.alloc(0));
+  const bytes = padToFilecoinMinimum(rawBytes);
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const artifactKey = `${input.kind}-${sha256.slice(0, 16)}`;
+  const filename = `${sha256}.${normalizeExtension(input.extension)}`;
+  const result = await options.filecoinClient.uploadObject({
+    bytes,
+    contentType: input.contentType,
+    filename,
+  });
+
+  return {
+    primaryReplicaProviderMetadata: {
+      capturedAt: new Date().toISOString(),
+      filecoin: {
+        dealCount: 1,
+        deals: [{ pieceCid: result.pieceCid, status: "stored" }],
+        network: "calibration",
+        status: "stored",
+      },
+      objectId: result.pieceCid,
+      provider: "filecoin-onchain-cloud",
+      raw: {
+        dataSetId: result.dataSetId,
+        pieceCid: result.pieceCid,
+        providerId: result.providerId,
+      },
+      status: "stored",
+    },
+    record: {
+      artifactKey,
+      byteLength: bytes.byteLength,
+      contentType: input.contentType,
+      kind: input.kind,
+      sha256: `0x${sha256}`,
+      storagePath: result.retrievalUrl,
+    },
+  };
+}
+
 export function buildPrimaryArtifactReplica(
   artifact: Pick<PersistedArtifactRecord, "storagePath">,
   options: ArtifactPersistenceOptions = {},
@@ -809,7 +866,9 @@ export async function persistArtifact(
           ? await persistIpfsArtifact(input, resolved)
           : resolved.backend === "s3"
             ? await persistS3Artifact(input, resolved)
-            : await persistHttpArtifact(input, resolved.httpBaseUrl);
+            : resolved.backend === "filecoin"
+              ? await persistFilecoinArtifact(input, resolved)
+              : await persistHttpArtifact(input, resolved.httpBaseUrl);
 
   const primaryReplica = buildPrimaryArtifactReplica(
     persisted.record,

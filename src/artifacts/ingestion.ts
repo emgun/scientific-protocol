@@ -523,7 +523,25 @@ async function extractTextFromBytes(
     }
   }
 
-  return { sourceText: text };
+  return { sourceText: sanitizeDecodedText(text) };
+}
+
+/// Unknown content types get decoded as UTF-8 opportunistically; binary
+/// formats (DjVu, images, archives) then leak NUL and other control bytes
+/// that Postgres JSON columns reject outright. Strip them, and when what
+/// remains is mostly non-textual, treat the source as yielding no text so
+/// extraction degrades cleanly instead of storing garbage candidates.
+function sanitizeDecodedText(text: string): string {
+  const stripped = text.replace(
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control bytes is the point
+    /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\uFFFD]/gu,
+    " ",
+  );
+  const printable = stripped.replace(/[^\p{L}\p{N}\p{P} ]/gu, "");
+  if (text.length > 0 && printable.length / text.length < 0.5) {
+    return "";
+  }
+  return stripped;
 }
 
 async function snapshotUrlSource(
