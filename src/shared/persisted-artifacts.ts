@@ -6,6 +6,12 @@ import { Readable } from "node:stream";
 import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import type { ArtifactReplicaProviderMetadata } from "./artifact-provider-metadata.js";
 import { parseEnumValue, readBooleanEnv } from "./cli.js";
+import {
+  createDefaultFilecoinClient,
+  type FilecoinLikeClient,
+  padToFilecoinMinimum,
+  resolveFilecoinClientOptions,
+} from "./filecoin-artifacts.js";
 import { createDefaultGcsClient, type GcsLikeClient, isGcsUrl, parseGcsUrl } from "./gcs.js";
 import {
   createDefaultIpfsClient,
@@ -16,12 +22,6 @@ import {
   parseIpfsUrl,
 } from "./ipfs.js";
 import { readEnvValue } from "./secrets.js";
-import {
-  createDefaultFilecoinClient,
-  type FilecoinLikeClient,
-  padToFilecoinMinimum,
-  resolveFilecoinClientOptions,
-} from "./filecoin-artifacts.js";
 import { sha256Hex } from "./sha256.js";
 
 export { sha256Hex } from "./sha256.js";
