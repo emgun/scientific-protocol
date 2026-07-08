@@ -2,5 +2,5 @@
   "filter_paths": "node_modules|foundry-test",
   "exclude_informational": true,
   "exclude_optimization": true,
-  "compile_force_framework": "hardhat"
+  "compile_force_framework": "foundry"
 }

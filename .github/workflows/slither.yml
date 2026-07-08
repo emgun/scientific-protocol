@@ -30,6 +30,14 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Setup Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.5.1
+
+      - name: Install Foundry dependencies
+        run: forge install foundry-rs/forge-std@v1.9.7 --no-git --shallow
+
       - name: Install dependencies
         run: npm ci
 
