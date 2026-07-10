@@ -7,7 +7,10 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { promisify } from "node:util";
 import { expect } from "chai";
-import { ingestArtifactSource } from "../src/artifacts/ingestion.js";
+import {
+  ingestArtifactSource,
+  UnsupportedArtifactContentError,
+} from "../src/artifacts/ingestion.js";
 import {
   readVerifiedJsonArtifact,
   verifyPersistedArtifact,
@@ -16,6 +19,30 @@ import {
 const execFile = promisify(execFileCallback);
 
 describe("ArtifactIngestion", () => {
+  it("rejects unsupported binary manuscripts instead of persisting decoded garbage", async () => {
+    const artifactRoot = await mkdtemp(path.join(os.tmpdir(), "sp-ingest-binary-"));
+    const sourcePath = path.join(artifactRoot, "paper.djvu");
+    await writeFile(
+      sourcePath,
+      Buffer.concat([
+        Buffer.from("AT&TFORM\u0000\u0000\u0000\u0018DJVMDIRM", "binary"),
+        Buffer.from(Array.from({ length: 256 }, (_, index) => index)),
+      ]),
+    );
+
+    try {
+      await assert.rejects(
+        ingestArtifactSource(
+          { sourceType: "url", sourceUrl: sourcePath },
+          { backend: "filesystem", filesystemRoot: artifactRoot },
+        ),
+        UnsupportedArtifactContentError,
+      );
+    } finally {
+      await rm(artifactRoot, { force: true, recursive: true });
+    }
+  });
+
   it("validates numeric draft inputs before fetching artifacts", async () => {
     await assert.rejects(
       ingestArtifactSource({

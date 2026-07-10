@@ -7,7 +7,8 @@ scientific work.
 Claims are the atomic objects. Artifacts are content-addressed. Onchain state stays narrow, while
 indexers, APIs, workers, and storage services remain replaceable node infrastructure.
 
-Public gateway: [scientificprotocol.org](https://scientificprotocol.org)
+- Website: [scientificprotocol.org](https://scientificprotocol.org)
+- Public API: [api.scientificprotocol.org](https://api.scientificprotocol.org)
 
 ## Quickstart (10 minutes)
 
@@ -17,16 +18,15 @@ Every gateway command below is exercised by a daily CI smoke against the live ga
 **1. Read protocol state — no install, no key, no account:**
 
 ```bash
-curl -s https://scientificprotocol.org/api/health
-curl -s "https://scientificprotocol.org/api/feeds/claims?limit=5"
-curl -s https://scientificprotocol.org/api/write-config
+curl -s https://api.scientificprotocol.org/health
+curl -s "https://api.scientificprotocol.org/feeds/claims?limit=5"
+curl -s https://api.scientificprotocol.org/write-config
 ```
 
 `health` includes indexed counts and sync status, `feeds/claims` is the paginated claim feed
 (fresh deployments return an empty page), and `write-config` returns everything a wallet needs
-to submit directly onchain. `beta/snapshot` serves the machine-readable deployment record. The
-full surface is described in [schemas/openapi.yaml](schemas/openapi.yaml); the same paths work
-against a local stack (`npm run mvp:local`, `http://127.0.0.1:3000`).
+to submit directly onchain. The full surface is described in
+[schemas/openapi.yaml](schemas/openapi.yaml).
 
 **2. Typed reads and contract bindings (TypeScript):**
 
@@ -38,7 +38,7 @@ npm install scientific-protocol
 import { ScientificProtocolClient } from "scientific-protocol";
 
 const client = new ScientificProtocolClient({
-  baseUrl: "https://scientificprotocol.org/api",
+  baseUrl: "https://api.scientificprotocol.org",
 });
 console.log(await client.getHealth());
 console.log(await client.listClaims({ limit: 5 }));
@@ -51,7 +51,7 @@ Generated contract ABIs and deployment metadata ship in the same package
 
 ```bash
 pip install scientific-protocol
-SP_API_BASE_URL=https://scientificprotocol.org/api scientific-protocol list-work-items --claimable --limit 10
+SP_API_BASE_URL=https://api.scientificprotocol.org scientific-protocol list-work-items --claimable --limit 10
 ```
 
 Writes are wallet-signed envelopes — gateways hold no keys and issue no API keys. The package

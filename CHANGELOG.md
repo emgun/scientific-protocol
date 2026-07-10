@@ -14,6 +14,21 @@ All notable changes to the `scientific-protocol` package are documented here. Th
 - JSON Schemas in `schemas/` are versioned with the package. Additive, optional fields are patch
   changes; anything else is minor.
 
+## [0.2.1] — 2026-07-10
+
+### Added
+
+- Durable source-publication attempts prevent retries from creating a second onchain claim after
+  indexer or database failures.
+- The claim feed supports `claimId` filtering and an aggregate `view=record` response for paginated
+  claim, artifact, replication, and source reads.
+
+### Changed
+
+- Unsupported binary manuscripts now fail closed instead of producing decoded metadata garbage.
+- Public API examples and smoke checks use `api.scientificprotocol.org`.
+- No ABI or canonical schema changes. Existing integrators require no action.
+
 ## [0.2.0] — 2026-07-06
 
 Protocol source code for the changes below landed in this repository on 2026-07-06; this

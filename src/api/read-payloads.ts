@@ -714,11 +714,13 @@ export async function buildClaimFeedPayload(
   dependencies: ApiDependencies,
   pool: Pool,
   query: {
+    claimId?: string;
     domainId?: number;
     limit?: number;
     machineProposed?: boolean;
     offset?: number;
     status?: number;
+    view?: "record" | "summary";
   } = {},
 ): Promise<{
   items: ClaimFeedItemView[];
@@ -728,8 +730,17 @@ export async function buildClaimFeedPayload(
 }> {
   const limit = Math.max(1, Math.min(query.limit ?? 20, 100));
   const offset = Math.max(0, query.offset ?? 0);
-  const claimsPage =
-    typeof query.machineProposed === "boolean"
+  const requestedClaim = query.claimId
+    ? await dependencies.readClaim(pool, query.claimId)
+    : undefined;
+  const claimsPage = query.claimId
+    ? {
+        items: requestedClaim ? [requestedClaim] : [],
+        limit,
+        offset,
+        total: requestedClaim ? 1 : 0,
+      }
+    : typeof query.machineProposed === "boolean"
       ? {
           items: await readAllPages((pageOffset, pageLimit) =>
             dependencies.readClaimsPage(pool, {
@@ -757,9 +768,48 @@ export async function buildClaimFeedPayload(
   const sourceByClaimId = new Map(
     publishedSources.map((source) => [source.publishedClaimId as string, source] as const),
   );
+  const claimIds = claimsPage.items.map((claim) => claim.claimId);
+  const recordData =
+    query.view === "record" && claimIds.length > 0
+      ? await Promise.all([
+          readAllPages((pageOffset, pageLimit) =>
+            dependencies.readArtifactsPage(pool, {
+              claimIds,
+              limit: pageLimit,
+              offset: pageOffset,
+            }),
+          ),
+          readAllPages((pageOffset, pageLimit) =>
+            dependencies.readReplicationsPage(pool, {
+              claimIds,
+              limit: pageLimit,
+              offset: pageOffset,
+            }),
+          ),
+          dependencies.readSourceExtractionCandidatesForSources(
+            pool,
+            publishedSources.map((source) => source.sourceId),
+          ),
+        ])
+      : null;
   const items = claimsPage.items
     .map((claim) => {
       const source = sourceByClaimId.get(claim.claimId) ?? null;
+      const record = recordData
+        ? {
+            artifacts: recordData[0].filter((artifact) => artifact.claimId === claim.claimId),
+            claim,
+            replications: recordData[1].filter(
+              (replication) => replication.claimId === claim.claimId,
+            ),
+            source: source
+              ? {
+                  candidates: recordData[2].get(source.sourceId) ?? [],
+                  source,
+                }
+              : null,
+          }
+        : undefined;
       return {
         claim: {
           author: claim.author,
@@ -772,6 +822,7 @@ export async function buildClaimFeedPayload(
           sourceTitle: source ? titleForSource(source) : null,
           status: claim.status,
         },
+        ...(record ? { record } : {}),
       } satisfies ClaimFeedItemView;
     })
     .filter((item) =>

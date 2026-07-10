@@ -122,6 +122,7 @@ export type AppealListOptions = {
 export type ArtifactListOptions = {
   artifactType?: number;
   claimId?: string;
+  claimIds?: string[];
   limit?: number;
   offset?: number;
   submitter?: string;
@@ -130,6 +131,7 @@ export type ArtifactListOptions = {
 export type ReplicationListOptions = {
   agentId?: string;
   claimId?: string;
+  claimIds?: string[];
   confidenceBps?: number;
   limit?: number;
   offset?: number;
@@ -1390,6 +1392,10 @@ function buildArtifactWhereClause(options: ArtifactListOptions): {
     values.push(options.claimId);
     clauses.push(`claim_id = $${values.length}`);
   }
+  if (options.claimIds && options.claimIds.length > 0) {
+    values.push(options.claimIds);
+    clauses.push(`claim_id = ANY($${values.length}::text[])`);
+  }
   if (options.artifactType !== undefined) {
     values.push(options.artifactType);
     clauses.push(`artifact_type = $${values.length}`);
@@ -1613,6 +1619,10 @@ function buildReplicationWhereClause(options: ReplicationListOptions): {
   if (options.claimId) {
     values.push(options.claimId);
     clauses.push(`claim_id = $${values.length}`);
+  }
+  if (options.claimIds && options.claimIds.length > 0) {
+    values.push(options.claimIds);
+    clauses.push(`claim_id = ANY($${values.length}::text[])`);
   }
   if (options.replicator) {
     values.push(options.replicator);

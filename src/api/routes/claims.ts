@@ -143,11 +143,13 @@ export async function handleClaimReadRoutes(context: RouteContext): Promise<bool
       response,
       200,
       await buildClaimFeedPayload(dependencies, pool, {
+        claimId: url.searchParams.get("claimId") ?? undefined,
         domainId: parseIntegerParam(url, "domainId"),
         limit: parseIntegerParam(url, "limit"),
         machineProposed: parseBooleanParam(url, "machineProposed"),
         offset: parseIntegerParam(url, "offset"),
         status: parseIntegerParam(url, "status"),
+        view: url.searchParams.get("view") === "record" ? "record" : "summary",
       }),
     );
     return true;

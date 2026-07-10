@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -7,13 +8,23 @@ import { expect } from "chai";
 import type { ArtifactDraftInput, ArtifactIngestionResult } from "../src/artifacts/ingestion.js";
 import { upsertPersistedArtifact } from "../src/coordinator/store.js";
 import {
+  attemptSourceAutoPublication,
+  type SourceAutoPublicationDependencies,
+} from "../src/sources/auto-publish.js";
+import {
   canonicalizeSourceLocator,
   decideSourceAutoPublication,
 } from "../src/sources/canonicalize.js";
+import {
+  confirmSourcePublication,
+  type ManualSourcePublicationDependencies,
+} from "../src/sources/manual-publication.js";
 import { sourcePublicationDomainId } from "../src/sources/publication.js";
 import { ingestSource } from "../src/sources/service.js";
 import {
+  insertSourceExtractionCandidate,
   prepareSourceStore,
+  readSourcePublicationAttempt,
   readSourceSubmissionRecordsPage,
   upsertSourceRecord,
 } from "../src/sources/store.js";
@@ -69,6 +80,222 @@ function makeStubIngestionResult(sourceLocator: string): ArtifactIngestionResult
 }
 
 describe("source ingress", { skip: database.skipReason }, () => {
+  it("resumes manual confirmation from the durable claim-ready checkpoint", async () => {
+    const pool = await prepareSourceStore();
+    const artifactRoot = await mkdtemp(path.join(os.tmpdir(), "sp-manual-publication-"));
+    const actor = `0x${"33".repeat(20)}`;
+    const source = await upsertSourceRecord(pool, {
+      canonicalSourceKey: `test:manual-publication:${Date.now()}`,
+      discoveryMode: "user_submitted",
+      sourceMetadata: { locator: "ipfs://manual-publication-test", title: "Manual test" },
+      sourceType: "url",
+      status: "ready_for_publication",
+      submittedByActor: actor,
+    });
+    const candidate = await insertSourceExtractionCandidate(pool, {
+      anchors: [{ label: "result", text: "The manual result is reproducible." }],
+      candidateId: "unused",
+      claimType: "computational",
+      confidenceBps: 8_500,
+      createdAt: "2026-07-10T00:00:00.000Z",
+      methodology: "Manual review",
+      reviewerAgentId: "1",
+      scope: "Published benchmark",
+      sourceId: source.sourceId,
+      statement: "The manual result is reproducible.",
+      submissionId: `manual-publication-${Date.now()}`,
+      taskId: "manual-publication-task",
+    });
+    const env = {
+      ...process.env,
+      SP_ARTIFACT_BACKEND: "filesystem",
+      SP_ARTIFACT_FILESYSTEM_ROOT: artifactRoot,
+    };
+    const testClaimId = String(9_100_000_000_000 + Date.now());
+    let createCalls = 0;
+    const createClaim: NonNullable<ManualSourcePublicationDependencies["createClaim"]> = async (
+      _input,
+      author,
+      _connection,
+      options,
+    ) => {
+      createCalls += 1;
+      const result = {
+        artifactId: "1",
+        author,
+        claimId: testClaimId,
+        job: null,
+        submittedBy: author,
+        txHashes: {
+          addArtifact: "0xmanualartifact",
+          createClaim: "0xmanualcreate",
+          publishClaim: "0xmanualpublish",
+        },
+      };
+      await options.onClaimReady?.({
+        artifactId: result.artifactId,
+        claimId: result.claimId,
+        txHashes: result.txHashes,
+      });
+      return result;
+    };
+    let syncCalls = 0;
+    const syncClaimReadModel = async () => {
+      syncCalls += 1;
+      if (syncCalls === 1) throw new Error("simulated manual indexer outage");
+    };
+    const input = {
+      actorAddress: actor,
+      candidateId: candidate.candidateId,
+      sourceId: source.sourceId,
+    };
+
+    try {
+      await assert.rejects(
+        confirmSourcePublication(pool, input, env, { createClaim, syncClaimReadModel }),
+        /simulated manual indexer outage/,
+      );
+      await pool.query(
+        `
+          INSERT INTO claims (
+            claim_id, author, domain_id, metadata_hash, resolution_module,
+            status, revision_of_claim_id, created_at_block
+          ) VALUES ($1, $2, 1, '0xmetadata', '0x0000000000000000000000000000000000000000', 1, NULL, 1)
+        `,
+        [testClaimId, actor],
+      );
+
+      const resumed = await confirmSourcePublication(pool, input, env, {
+        createClaim,
+        syncClaimReadModel,
+      });
+      expect(resumed.publishedClaimId).to.equal(testClaimId);
+      expect(resumed.source.status).to.equal("published");
+      expect(createCalls).to.equal(1);
+    } finally {
+      await pool.query("DELETE FROM claims WHERE claim_id = $1", [testClaimId]);
+      await pool.end();
+      await rm(artifactRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("resumes a claim-ready publication without creating a duplicate claim", async () => {
+    const pool = await prepareSourceStore();
+    const artifactRoot = await mkdtemp(path.join(os.tmpdir(), "sp-source-publication-"));
+    const source = await upsertSourceRecord(pool, {
+      canonicalSourceKey: `test:publication:${Date.now()}`,
+      discoveryMode: "agent_discovered",
+      sourceMetadata: { locator: "ipfs://publication-test", title: "Publication test" },
+      sourceType: "url",
+      status: "ready_for_publication",
+    });
+    const candidateBase = {
+      anchors: [{ label: "result", text: "The measured result is reproducible." }],
+      candidateId: "unused",
+      claimType: "computational",
+      confidenceBps: 9_000,
+      createdAt: "2026-07-10T00:00:00.000Z",
+      methodology: "Independent extraction",
+      scope: "Published benchmark",
+      statement: "The measured result is reproducible.",
+      taskId: "publication-task",
+    };
+    await insertSourceExtractionCandidate(pool, {
+      ...candidateBase,
+      reviewerAgentId: "1",
+      sourceId: source.sourceId,
+      submissionId: `publication-a-${Date.now()}`,
+    });
+    await insertSourceExtractionCandidate(pool, {
+      ...candidateBase,
+      reviewerAgentId: "2",
+      sourceId: source.sourceId,
+      submissionId: `publication-b-${Date.now()}`,
+    });
+
+    const env = {
+      ...process.env,
+      SP_ARTIFACT_BACKEND: "filesystem",
+      SP_ARTIFACT_FILESYSTEM_ROOT: artifactRoot,
+      SP_CLAIM_SUBMITTER_PRIVATE_KEY: `0x${"11".repeat(32)}`,
+    };
+    const testClaimId = String(9_000_000_000_000 + Date.now());
+    let createCalls = 0;
+    const createClaim: NonNullable<SourceAutoPublicationDependencies["createClaim"]> = async (
+      _input,
+      author,
+      _connection,
+      options,
+    ) => {
+      createCalls += 1;
+      const result = {
+        artifactId: "1",
+        author,
+        claimId: testClaimId,
+        job: null,
+        submittedBy: author,
+        txHashes: {
+          addArtifact: "0xartifact",
+          createClaim: "0xcreate",
+          publishClaim: "0xpublish",
+        },
+      };
+      await options.onClaimReady?.({
+        artifactId: result.artifactId,
+        claimId: result.claimId,
+        txHashes: result.txHashes,
+      });
+      return result;
+    };
+    let syncCalls = 0;
+    const syncClaimReadModel = async () => {
+      syncCalls += 1;
+      if (syncCalls === 1) {
+        throw new Error("simulated indexer outage");
+      }
+    };
+
+    try {
+      await assert.rejects(
+        attemptSourceAutoPublication(pool, source.sourceId, env, {
+          createClaim,
+          syncClaimReadModel,
+        }),
+        /simulated indexer outage/,
+      );
+      expect(createCalls).to.equal(1);
+      expect((await readSourcePublicationAttempt(pool, source.sourceId))?.status).to.equal(
+        "claim_ready",
+      );
+
+      await pool.query(
+        `
+          INSERT INTO claims (
+            claim_id, author, domain_id, metadata_hash, resolution_module,
+            status, revision_of_claim_id, created_at_block
+          ) VALUES ($1, $2, 1, '0xmetadata', '0x0000000000000000000000000000000000000000', 1, NULL, 1)
+          ON CONFLICT (claim_id) DO NOTHING
+        `,
+        [testClaimId, `0x${"22".repeat(20)}`],
+      );
+
+      const resumed = await attemptSourceAutoPublication(pool, source.sourceId, env, {
+        createClaim,
+        syncClaimReadModel,
+      });
+      expect(resumed.publishedClaimId).to.equal(testClaimId);
+      expect(resumed.source?.status).to.equal("published");
+      expect(createCalls).to.equal(1);
+      expect((await readSourcePublicationAttempt(pool, source.sourceId))?.status).to.equal(
+        "completed",
+      );
+    } finally {
+      await pool.query("DELETE FROM claims WHERE claim_id = $1", [testClaimId]);
+      await pool.end();
+      await rm(artifactRoot, { force: true, recursive: true });
+    }
+  });
+
   it("parses source publication domain ids explicitly", () => {
     expect(sourcePublicationDomainId({})).to.equal(1);
     expect(sourcePublicationDomainId({ domainId: "   " })).to.equal(1);

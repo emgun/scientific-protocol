@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Scientific Protocol Read API
-  version: 0.1.0
+  version: 0.2.1
   description: |
     Public read surface of a Scientific Protocol gateway, plus the shape of the
     signed public-write envelope. This is a v0 contract document: it names the
@@ -14,8 +14,8 @@ info:
     exist and gateways hold no user keys. Endpoints under /demo and /admin are
     operator/sandbox surfaces and are intentionally not part of this contract.
 servers:
-  - url: https://scientificprotocol.org/api
-    description: Public gateway
+  - url: https://api.scientificprotocol.org
+    description: Public reference API
   - url: http://127.0.0.1:3000
     description: Local stack (npm run mvp:local)
 tags:
@@ -90,6 +90,8 @@ paths:
         - { name: domainId, in: query, schema: { type: integer } }
         - { name: status, in: query, schema: { type: integer } }
         - { name: machineProposed, in: query, schema: { type: boolean } }
+        - { name: claimId, in: query, schema: { type: string } }
+        - { name: view, in: query, schema: { type: string, enum: [summary, record] } }
       responses:
         "200": { $ref: "#/components/responses/JsonObject" }
   /events/claims:

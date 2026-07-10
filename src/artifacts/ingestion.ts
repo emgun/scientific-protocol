@@ -147,6 +147,13 @@ type ExtractedTextResult = {
   titleHint?: string | null;
 };
 
+export class UnsupportedArtifactContentError extends Error {
+  constructor(contentType: string, extension: string) {
+    super(`unsupported artifact content for text extraction: ${contentType} (.${extension})`);
+    this.name = "UnsupportedArtifactContentError";
+  }
+}
+
 type SnapshotResult = {
   artifactType: number;
   contentType: string;
@@ -507,6 +514,28 @@ async function extractTextFromBytes(
     }
   }
 
+  const textExtensions = new Set([
+    "csv",
+    "htm",
+    "html",
+    "json",
+    "md",
+    "mdx",
+    "rst",
+    "tex",
+    "text",
+    "txt",
+    "xml",
+  ]);
+  const textContent =
+    normalizedType.startsWith("text/") ||
+    normalizedType.includes("application/json") ||
+    normalizedType.includes("application/xml") ||
+    textExtensions.has(normalizedExtension);
+  if (!textContent) {
+    throw new UnsupportedArtifactContentError(contentType, extension);
+  }
+
   const text = bytes.toString("utf8");
   if (normalizedType.includes("text/html") || ["html", "htm"].includes(normalizedExtension)) {
     return { sourceText: htmlToText(text) };
@@ -523,14 +552,13 @@ async function extractTextFromBytes(
     }
   }
 
-  return { sourceText: sanitizeDecodedText(text) };
+  const sanitized = sanitizeDecodedText(text);
+  if (bytes.length > 0 && sanitized.trim() === "") {
+    throw new UnsupportedArtifactContentError(contentType, extension);
+  }
+  return { sourceText: sanitized };
 }
 
-/// Unknown content types get decoded as UTF-8 opportunistically; binary
-/// formats (DjVu, images, archives) then leak NUL and other control bytes
-/// that Postgres JSON columns reject outright. Strip them, and when what
-/// remains is mostly non-textual, treat the source as yielding no text so
-/// extraction degrades cleanly instead of storing garbage candidates.
 function sanitizeDecodedText(text: string): string {
   const stripped = text.replace(
     // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control bytes is the point
@@ -538,7 +566,11 @@ function sanitizeDecodedText(text: string): string {
     " ",
   );
   const printable = stripped.replace(/[^\p{L}\p{N}\p{P} ]/gu, "");
-  if (text.length > 0 && printable.length / text.length < 0.5) {
+  const replacementCount = [...text].filter((character) => character === "\uFFFD").length;
+  if (
+    text.length > 0 &&
+    (printable.length / text.length < 0.85 || replacementCount / text.length > 0.01)
+  ) {
     return "";
   }
   return stripped;
