@@ -3385,6 +3385,42 @@ describe("ApiServer", () => {
     }
   });
 
+  it("serves open CORS on the public read surface", async () => {
+    const { baseUrl, close } = await startServer();
+
+    try {
+      const read = await fetch(`${baseUrl}/feeds/claims?limit=1`, {
+        headers: { origin: "https://any-reader.example" },
+      });
+      expect(read.headers.get("access-control-allow-origin")).to.equal("*");
+
+      const preflight = await fetch(`${baseUrl}/feeds/claims`, {
+        method: "OPTIONS",
+        headers: {
+          origin: "https://any-reader.example",
+          "access-control-request-method": "GET",
+        },
+      });
+      expect(preflight.status).to.equal(204);
+      expect(preflight.headers.get("access-control-allow-origin")).to.equal("*");
+    } finally {
+      await close();
+    }
+  });
+
+  it("keeps admin and agent surfaces out of open CORS", async () => {
+    const { baseUrl, close } = await startServer();
+
+    try {
+      const admin = await fetch(`${baseUrl}/admin/status`, {
+        headers: { origin: "https://any-reader.example" },
+      });
+      expect(admin.headers.get("access-control-allow-origin")).to.equal(null);
+    } finally {
+      await close();
+    }
+  });
+
   it("creates production claims through signed public write requests", async () => {
     let receivedInput: Record<string, unknown> | null = null;
     let receivedAuthor = "";
