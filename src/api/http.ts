@@ -20,6 +20,16 @@ export function json(response: http.ServerResponse, statusCode: number, payload:
 export const PUBLIC_CORS_READ_PATHS = new Set(["/write-config"]);
 export const PUBLIC_CORS_METHODS = new Set(["GET", "HEAD"]);
 
+/// Prefixes whose routes never get open CORS: authenticated or operator
+/// surfaces where cross-origin reads would be misleading rather than useful.
+const OPEN_CORS_EXCLUDED_PREFIXES = ["/admin", "/agent", "/demo", "/operator"];
+
+/// The indexed read surface is public, read-only, and cookie-less, so any
+/// origin may read it. Write and operator surfaces keep their own rules.
+export function isOpenCorsReadPath(pathname: string): boolean {
+  return !OPEN_CORS_EXCLUDED_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+}
+
 export function configuredPublicCorsOrigins(env: NodeJS.ProcessEnv): Set<string> {
   return new Set(
     (readEnvValue(env, "SP_PUBLIC_CORS_ORIGINS") ?? "")
@@ -57,19 +67,34 @@ export function applyPublicCorsHeaders(
   url: URL,
   env: NodeJS.ProcessEnv,
 ): boolean {
-  if (!PUBLIC_CORS_READ_PATHS.has(url.pathname)) return false;
-  const origin = requestOrigin(request);
-  if (!origin) return false;
-  const allowedOrigins = configuredPublicCorsOrigins(env);
-  if (!allowedOrigins.has(origin)) return false;
+  if (PUBLIC_CORS_READ_PATHS.has(url.pathname)) {
+    const origin = requestOrigin(request);
+    if (!origin) return false;
+    const allowedOrigins = configuredPublicCorsOrigins(env);
+    if (!allowedOrigins.has(origin)) return false;
 
-  response.setHeader("access-control-allow-origin", origin);
-  response.setHeader("access-control-allow-methods", "GET, HEAD, OPTIONS");
-  response.setHeader("access-control-allow-headers", "accept, content-type");
-  response.setHeader("access-control-max-age", "600");
-  response.setHeader("cross-origin-resource-policy", "cross-origin");
-  appendVaryOrigin(response);
-  return true;
+    response.setHeader("access-control-allow-origin", origin);
+    response.setHeader("access-control-allow-methods", "GET, HEAD, OPTIONS");
+    response.setHeader("access-control-allow-headers", "accept, content-type");
+    response.setHeader("access-control-max-age", "600");
+    response.setHeader("cross-origin-resource-policy", "cross-origin");
+    appendVaryOrigin(response);
+    return true;
+  }
+
+  if (
+    (request.method === "GET" || request.method === "HEAD" || request.method === "OPTIONS") &&
+    isOpenCorsReadPath(url.pathname)
+  ) {
+    response.setHeader("access-control-allow-origin", "*");
+    response.setHeader("access-control-allow-methods", "GET, HEAD, OPTIONS");
+    response.setHeader("access-control-allow-headers", "accept, content-type");
+    response.setHeader("access-control-max-age", "600");
+    response.setHeader("cross-origin-resource-policy", "cross-origin");
+    return true;
+  }
+
+  return false;
 }
 
 export function handlePublicCorsPreflight(
@@ -78,7 +103,8 @@ export function handlePublicCorsPreflight(
   url: URL,
   env: NodeJS.ProcessEnv,
 ): boolean {
-  if (request.method !== "OPTIONS" || !PUBLIC_CORS_READ_PATHS.has(url.pathname)) return false;
+  if (request.method !== "OPTIONS") return false;
+  if (!PUBLIC_CORS_READ_PATHS.has(url.pathname) && !isOpenCorsReadPath(url.pathname)) return false;
   const requestedMethod = String(
     request.headers["access-control-request-method"] ?? "",
   ).toUpperCase();
