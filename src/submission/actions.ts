@@ -45,6 +45,11 @@ export type ProductionClaimResult = {
   };
 };
 
+export type ProductionClaimReadyCheckpoint = Pick<
+  ProductionClaimResult,
+  "artifactId" | "claimId" | "txHashes"
+>;
+
 export type ProductionArtifactDraftInput = ArtifactDraftInput;
 export type ProductionArtifactDraftResult = SourceIngestionResult;
 
@@ -54,7 +59,10 @@ export async function createProductionClaim(
   input: ProductionClaimInput,
   authorAddress: string,
   connection?: CoordinatorConnection,
-  options: { env?: NodeJS.ProcessEnv } = {},
+  options: {
+    env?: NodeJS.ProcessEnv;
+    onClaimReady?: (checkpoint: ProductionClaimReadyCheckpoint) => Promise<void>;
+  } = {},
 ): Promise<ProductionClaimResult> {
   const env = options.env ?? process.env;
   if (!input.statement || input.statement.trim() === "") {
@@ -158,7 +166,7 @@ export async function createProductionClaim(
     }
   }
 
-  return {
+  const result = {
     artifactId,
     author: authorAddress,
     claimId,
@@ -170,6 +178,12 @@ export async function createProductionClaim(
       publishClaim: publishReceipt.hash,
     },
   };
+  await options.onClaimReady?.({
+    artifactId: result.artifactId,
+    claimId: result.claimId,
+    txHashes: result.txHashes,
+  });
+  return result;
 }
 
 export async function createProductionArtifactDraft(

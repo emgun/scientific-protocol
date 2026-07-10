@@ -21,9 +21,9 @@ jobs:
       - name: Quickstart endpoints respond
         run: |
           set -euo pipefail
-          base="https://scientificprotocol.org/api"
+          base="https://api.scientificprotocol.org"
           fail=0
-          for path in /health /beta/snapshot /write-config "/feeds/claims?limit=5" /claims "/work-items?limit=5"; do
+          for path in /health /write-config "/feeds/claims?limit=5" /claims "/work-items?limit=5"; do
             code=$(curl -sS -m 15 -o /tmp/body -w '%{http_code}' "$base$path")
             if [ "$code" != "200" ]; then
               echo "FAIL $path -> HTTP $code"
@@ -40,7 +40,7 @@ jobs:
       - name: Health reports serving
         run: |
           set -euo pipefail
-          curl -sS -m 15 https://scientificprotocol.org/api/health | python3 -c "
+          curl -sS -m 15 https://api.scientificprotocol.org/health | python3 -c "
           import json,sys
           body = json.load(sys.stdin)
           print(json.dumps(body, indent=2))

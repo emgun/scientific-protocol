@@ -89,6 +89,25 @@ export type SourcePublicationDecisionView = {
   winningCluster: SourcePublicationCluster | null;
 };
 
+export type SourcePublicationAttemptStatus =
+  | "pending"
+  | "claim_ready"
+  | "completed"
+  | "reconciliation_required";
+
+export type SourcePublicationAttemptView = {
+  attemptId: string;
+  candidateId: string;
+  claimId: string | null;
+  createdAt: string;
+  lastError: string | null;
+  publicationMode: "auto" | "manual";
+  sourceId: string;
+  status: SourcePublicationAttemptStatus;
+  transactionHashes: Record<string, string> | null;
+  updatedAt: string;
+};
+
 export type SourceFeedItemView = {
   candidateCount: number;
   latestDecision: SourcePublicationDecisionView | null;
@@ -126,6 +145,15 @@ export type ClaimFeedItemView = {
     sourceTitle: string | null;
     status: number;
   };
+  record?: {
+    artifacts: ArtifactView[];
+    claim: ClaimView;
+    replications: ReplicationView[];
+    source: {
+      candidates: SourceExtractionCandidate[];
+      source: SourceRecordView;
+    } | null;
+  };
 };
 
 export type ClaimEventType = "claim.published.machine_proposed";
@@ -147,3 +175,5 @@ export type CanonicalSourceLocator = {
   ref: string | null;
   sourceType: SourceType;
 };
+
+import type { ArtifactView, ClaimView, ReplicationView } from "../shared/read-model.js";

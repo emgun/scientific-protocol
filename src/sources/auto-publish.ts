@@ -9,10 +9,14 @@ import { createProductionClaim } from "../submission/actions.js";
 import { decideSourceAutoPublication } from "./canonicalize.js";
 import { sourcePublicationDomainId } from "./publication.js";
 import {
+  markSourcePublicationAttemptCompleted,
+  markSourcePublicationClaimReady,
+  markSourcePublicationReconciliationRequired,
   markSourcePublished,
   readSourceExtractionCandidates,
   readSourceRecord,
   recordSourcePublicationDecision,
+  reserveSourcePublicationAttempt,
   updateSourceRecordStatus,
 } from "./store.js";
 import type {
@@ -61,6 +65,11 @@ async function syncPublicationClaimReadModel(env: NodeJS.ProcessEnv): Promise<vo
     }
   }
 }
+
+export type SourceAutoPublicationDependencies = {
+  createClaim?: typeof createProductionClaim;
+  syncClaimReadModel?: typeof syncPublicationClaimReadModel;
+};
 
 async function persistSourceDecisionArtifact(
   pool: Pool,
@@ -127,7 +136,10 @@ export async function attemptSourceAutoPublication(
   pool: Pool,
   sourceId: string,
   env: NodeJS.ProcessEnv = process.env,
+  dependencies: SourceAutoPublicationDependencies = {},
 ): Promise<{ publishedClaimId: string | null; reason: string; source: SourceRecordView | null }> {
+  const createClaim = dependencies.createClaim ?? createProductionClaim;
+  const syncClaimReadModel = dependencies.syncClaimReadModel ?? syncPublicationClaimReadModel;
   const source = await readSourceRecord(pool, sourceId);
   if (!source) {
     return { publishedClaimId: null, reason: "source_not_found", source: null };
@@ -201,27 +213,70 @@ export async function attemptSourceAutoPublication(
         ? source.submittedByActor
         : await machineSigner.getAddress();
 
-    const result = await createProductionClaim(
-      {
-        artifactType: 5,
-        artifactUri: sourceArtifactUri(source),
-        domainId: sourcePublicationDomainId(source.sourceMetadata),
-        metadata: metadataForSourcePublication(source, winningCandidate),
-        methodology: winningCandidate.methodology,
-        openReplicationJob: false,
-        requestedBy: "source-auto-publish",
-        scope: winningCandidate.scope,
-        statement: winningCandidate.statement,
-      },
-      machineProposedAuthor,
-      pool,
-      { env },
-    );
-    publishedClaimId = result.claimId;
-    await syncPublicationClaimReadModel(env);
+    const reservation = await reserveSourcePublicationAttempt(pool, {
+      candidateId: winningCandidate.candidateId,
+      publicationMode: "auto",
+      sourceId,
+    });
+    if (!reservation.created) {
+      if (
+        reservation.attempt.candidateId !== winningCandidate.candidateId ||
+        reservation.attempt.publicationMode !== "auto"
+      ) {
+        return {
+          publishedClaimId: null,
+          reason: "publication_attempt_conflict",
+          source,
+        };
+      }
+      if (reservation.attempt.status !== "claim_ready" || !reservation.attempt.claimId) {
+        return {
+          publishedClaimId: null,
+          reason: "publication_requires_reconciliation",
+          source,
+        };
+      }
+      publishedClaimId = reservation.attempt.claimId;
+    } else {
+      try {
+        const result = await createClaim(
+          {
+            artifactType: 5,
+            artifactUri: sourceArtifactUri(source),
+            domainId: sourcePublicationDomainId(source.sourceMetadata),
+            metadata: metadataForSourcePublication(source, winningCandidate),
+            methodology: winningCandidate.methodology,
+            openReplicationJob: false,
+            requestedBy: "source-auto-publish",
+            scope: winningCandidate.scope,
+            statement: winningCandidate.statement,
+          },
+          machineProposedAuthor,
+          pool,
+          {
+            env,
+            onClaimReady: async (checkpoint) => {
+              await markSourcePublicationClaimReady(pool, {
+                claimId: checkpoint.claimId,
+                sourceId,
+                transactionHashes: checkpoint.txHashes,
+              });
+            },
+          },
+        );
+        publishedClaimId = result.claimId;
+      } catch (error) {
+        await markSourcePublicationReconciliationRequired(pool, {
+          error: error instanceof Error ? error.message : String(error),
+          sourceId,
+        });
+        throw error;
+      }
+    }
+    await syncClaimReadModel(env);
     sourceAfterDecision =
       (await markSourcePublished(pool, {
-        publishedClaimId: result.claimId,
+        publishedClaimId,
         sourceId,
       })) ?? source;
   } else if (decision.winningCluster) {
@@ -248,6 +303,9 @@ export async function attemptSourceAutoPublication(
     sourceId,
     winningCluster: decision.winningCluster,
   });
+  if (publishedClaimId) {
+    await markSourcePublicationAttemptCompleted(pool, sourceId);
+  }
   return {
     publishedClaimId,
     reason: decision.reason,

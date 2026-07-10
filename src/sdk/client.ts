@@ -752,11 +752,13 @@ export class ScientificProtocolClient {
   }
 
   async listClaimFeed(query?: {
+    claimId?: string | number;
     domainId?: number;
     limit?: number;
     machineProposed?: boolean;
     offset?: number;
     status?: number;
+    view?: "record" | "summary";
   }): Promise<ClaimFeedResponse> {
     return this.request(`/feeds/claims${toSearchParams(query)}`);
   }

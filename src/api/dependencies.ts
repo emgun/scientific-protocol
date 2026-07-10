@@ -131,6 +131,7 @@ import { ingestSource } from "../sources/service.js";
 import {
   readSourceByCanonicalKey,
   readSourceExtractionCandidates,
+  readSourceExtractionCandidatesForSources,
   readSourcePublicationDecisionsPage,
   readSourceRecord,
   readSourceSubmissionRecordsPage,
@@ -248,6 +249,7 @@ export type ApiDependencies = {
   readReviewTaskRuns: typeof readReviewTaskRuns;
   readReviewTasksPage: typeof readReviewTasksPage;
   readSourceExtractionCandidates: typeof readSourceExtractionCandidates;
+  readSourceExtractionCandidatesForSources: typeof readSourceExtractionCandidatesForSources;
   readSourceByCanonicalKey: typeof readSourceByCanonicalKey;
   readSourcePublicationDecisionsPage: typeof readSourcePublicationDecisionsPage;
   readSourceRecord: typeof readSourceRecord;
@@ -409,6 +411,7 @@ export const defaultDependencies: ApiDependencies = {
   readReviewTaskRuns,
   readReviewTasksPage,
   readSourceExtractionCandidates,
+  readSourceExtractionCandidatesForSources,
   readSourceByCanonicalKey,
   readSourcePublicationDecisionsPage,
   readSourceRecord,

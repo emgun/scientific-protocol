@@ -1922,14 +1922,23 @@ function createDependencyOverrides(
     }),
     readAgentControllers: async (_pool, agentId) =>
       readModel.agentControllers.filter((controller) => controller.agentId === agentId),
-    readArtifactsPage: async (_pool, options) => ({
-      items: readModel.artifacts.filter((artifact) =>
-        options.claimId === undefined ? true : artifact.claimId === options.claimId,
-      ),
-      total: readModel.artifacts.length,
-      limit: options.limit ?? 20,
-      offset: options.offset ?? 0,
-    }),
+    readArtifactsPage: async (_pool, options) => {
+      const filtered = readModel.artifacts.filter((artifact) =>
+        options.claimId !== undefined
+          ? artifact.claimId === options.claimId
+          : options.claimIds
+            ? options.claimIds.includes(artifact.claimId)
+            : true,
+      );
+      const limit = options.limit ?? 20;
+      const offset = options.offset ?? 0;
+      return {
+        items: filtered.slice(offset, offset + limit),
+        total: filtered.length,
+        limit,
+        offset,
+      };
+    },
     readArtifactsByClaim: async (_pool, claimId) =>
       readModel.artifacts.filter((artifact) => artifact.claimId === claimId),
     readMetadata: async () => ({
@@ -2367,14 +2376,23 @@ function createDependencyOverrides(
     }),
     readAppealsByClaim: async (_pool, claimId) =>
       readModel.appeals.filter((appeal) => appeal.claimId === claimId),
-    readReplicationsPage: async (_pool, options) => ({
-      items: readModel.replications.filter((replication) =>
-        options.claimId === undefined ? true : replication.claimId === options.claimId,
-      ),
-      total: readModel.replications.length,
-      limit: options.limit ?? 20,
-      offset: options.offset ?? 0,
-    }),
+    readReplicationsPage: async (_pool, options) => {
+      const filtered = readModel.replications.filter((replication) =>
+        options.claimId !== undefined
+          ? replication.claimId === options.claimId
+          : options.claimIds
+            ? options.claimIds.includes(replication.claimId)
+            : true,
+      );
+      const limit = options.limit ?? 20;
+      const offset = options.offset ?? 0;
+      return {
+        items: filtered.slice(offset, offset + limit),
+        total: filtered.length,
+        limit,
+        offset,
+      };
+    },
     readReplicationsByClaim: async (_pool, claimId) =>
       readModel.replications.filter((replication) => replication.claimId === claimId),
     readCheckpointsPage: async (_pool, options) => ({
@@ -7313,6 +7331,7 @@ describe("ApiServer", () => {
     ];
 
     const { baseUrl, close } = await startServer({
+      readClaim: async (_pool, claimId) => claims.find((claim) => claim.claimId === claimId),
       readClaimsPage: async (_pool, options) => {
         const filtered = claims.filter(
           (claim) =>
@@ -7344,6 +7363,8 @@ describe("ApiServer", () => {
       },
       readSourceExtractionCandidates: async (_pool, sourceId) =>
         candidatesBySourceId.get(sourceId) ?? [],
+      readSourceExtractionCandidatesForSources: async (_pool, sourceIds) =>
+        new Map(sourceIds.map((sourceId) => [sourceId, candidatesBySourceId.get(sourceId) ?? []])),
       readSourcePublicationDecisionsPage: async (_pool, options) => {
         const filtered = decisions.filter(
           (decision) =>
@@ -7404,6 +7425,14 @@ describe("ApiServer", () => {
       expect(claimFeedPayload.items[0].claim.claimId).to.equal("21");
       expect(claimFeedPayload.items[0].claim.machineProposed).to.equal(true);
       expect(claimFeedPayload.items[0].claim.sourceId).to.equal("7");
+
+      const recordFeedResponse = await fetch(`${baseUrl}/feeds/claims?claimId=21&view=record`);
+      expect(recordFeedResponse.status).to.equal(200);
+      const recordFeedPayload = await recordFeedResponse.json();
+      expect(recordFeedPayload.total).to.equal(1);
+      expect(recordFeedPayload.items[0].record.claim.claimId).to.equal("21");
+      expect(recordFeedPayload.items[0].record.source.source.sourceId).to.equal("7");
+      expect(recordFeedPayload.items[0].record.source.candidates).to.have.length(1);
 
       const sourceEventsResponse = await fetch(
         `${baseUrl}/events/sources?eventType=source.published&sourceId=7`,
