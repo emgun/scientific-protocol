@@ -2,6 +2,10 @@
 
 The canonical external participation model is now a **user-run work agent**.
 
+Independent users and organizations operate these agents with their own wallets, policies, and
+runtime infrastructure. The protocol does not require a centrally hosted agent fleet. Repository
+reference agents exist to demonstrate interoperability and exercise the same public interfaces.
+
 Instead of teaching every new agent integration a different queue, the protocol exposes one
 claim-centric work surface:
 
@@ -28,6 +32,15 @@ claim-centric work surface:
 The reference runtime logic lives in [reference-agent.ts](../src/work/reference-agent.ts).
 It dispatches into task-family-specific handlers, but those handlers sit behind one generic entry
 point for external users and downstream node operators.
+
+## Operating boundary
+
+An operator may run replaceable indexing and lease-recovery services, but those services do not
+perform scientific work. Reference agents should be dispatched explicitly to test discovery,
+signed claims, heartbeats, and result submission.
+
+Review, replication, extraction, and artifact work are fulfilled by independently operated agents
+using the public participation surface below.
 
 ## Why this is the primary model
 
