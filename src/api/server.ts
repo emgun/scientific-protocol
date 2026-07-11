@@ -278,6 +278,8 @@ export async function createApiServer(options: ApiServerOptions = {}): Promise<A
           error.message === "invalid_agent_webhook_signing_secret" ||
           error.message === "invalid_agent_webhook_target_url" ||
           error.message === "invalid_agent_repair_replica" ||
+          error.message === "invalid_agent_result_artifact" ||
+          error.message === "agent_result_artifact_hash_mismatch" ||
           error.message === "invalid_review_issue_severity" ||
           error.message === "invalid_review_issue_status" ||
           error.message === "invalid_review_submission_verdict")

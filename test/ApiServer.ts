@@ -56,7 +56,7 @@ import {
   hashAgentRequestEnvelope,
 } from "../src/shared/agent-requests.js";
 import type { OperatorRequestView } from "../src/shared/operator-requests.js";
-import { sha256Hex } from "../src/shared/persisted-artifacts.js";
+import { createInlineJsonArtifact, sha256Hex } from "../src/shared/persisted-artifacts.js";
 import type { PublicWriteRequestView } from "../src/shared/public-write-requests.js";
 import { hashPublicWriteEnvelope } from "../src/shared/public-write-requests.js";
 import type { ReadModel } from "../src/shared/read-model.js";
@@ -5486,22 +5486,32 @@ describe("ApiServer", () => {
 
   it("accepts signed agent review submissions for claimed review tasks", async () => {
     const wallet = Wallet.createRandom();
-    const { baseUrl, close } = await startServer({
-      readAgent: async (_pool, agentId) =>
-        agentId === "1"
-          ? {
-              agentId: "1",
-              operator: wallet.address,
-              metadataHash: "0x07",
-              uri: "ipfs://agent",
-              budgetBalance: "100",
-              reservedBudget: "0",
-              spendLimit: "50",
-              active: true,
-            }
-          : undefined,
-      upsertPersistedArtifact: async () => {},
-    });
+    let persistedResultArtifactKey: string | null = null;
+    const { baseUrl, close } = await startServer(
+      {
+        readAgent: async (_pool, agentId) =>
+          agentId === "1"
+            ? {
+                agentId: "1",
+                operator: wallet.address,
+                metadataHash: "0x07",
+                uri: "ipfs://agent",
+                budgetBalance: "100",
+                reservedBudget: "0",
+                spendLimit: "50",
+                active: true,
+              }
+            : undefined,
+        upsertPersistedArtifact: async (_pool, artifact) => {
+          persistedResultArtifactKey = artifact.artifactKey;
+        },
+      },
+      {
+        env: {
+          SP_ARTIFACT_BACKEND: "http",
+        },
+      },
+    );
 
     try {
       const claimSigned = await buildSignedAgentRequestBody(wallet, {
@@ -5525,6 +5535,9 @@ describe("ApiServer", () => {
       const claimPayload = await claimResponse.json();
       const runId = claimPayload.result.run.runId;
 
+      const suppliedResultArtifact = createInlineJsonArtifact("agent-review-submission-result", {
+        summary: "Open contradiction pressure remains moderate.",
+      });
       const submitSigned = await buildSignedAgentRequestBody(wallet, {
         actionType: "review_task_submission",
         actorAddress: wallet.address,
@@ -5546,6 +5559,7 @@ describe("ApiServer", () => {
               summary: "Open contradiction pressure remains elevated.",
             },
           ],
+          resultArtifact: suppliedResultArtifact,
         },
         requestNonce: "nonce-review-submit-3",
         scopeKey: "review-task:2",
@@ -5562,6 +5576,10 @@ describe("ApiServer", () => {
       expect(submitPayload.ok).to.equal(true);
       expect(submitPayload.result.submission.taskId).to.equal("2");
       expect(submitPayload.result.submission.verdict).to.equal("flag");
+      expect(submitPayload.result.submission.resultArtifactKey).to.equal(
+        suppliedResultArtifact.artifactKey,
+      );
+      expect(persistedResultArtifactKey).to.equal(suppliedResultArtifact.artifactKey);
 
       const submissionsResponse = await fetch(`${baseUrl}/review-tasks/2/submissions`);
       expect(submissionsResponse.status).to.equal(200);

@@ -13,6 +13,7 @@ import {
   type AgentRequestSigner,
   createSignedAgentRequest,
 } from "../shared/agent-request-envelope.js";
+import { createInlineJsonArtifact } from "../shared/persisted-artifacts.js";
 import { decideSourceAutoPublication } from "../sources/canonicalize.js";
 import { evaluateReviewTask, type ReviewTaskEvaluationInput } from "./evaluate.js";
 import type { ClaimReviewState, ReviewTaskType } from "./types.js";
@@ -503,20 +504,32 @@ export async function runReferenceReviewAgentOnce(
           })()
         : Promise.reject(new Error("review_task_missing_subject"));
     const resolvedEvaluation = await evaluation;
+    const actorAddress = options.actorAddress ?? (await options.signer.getAddress());
+    const submissionPayload = {
+      confidenceBps: resolvedEvaluation.confidenceBps,
+      dimensions: resolvedEvaluation.dimensions,
+      issues: resolvedEvaluation.issues,
+      ...(resolvedEvaluation.payload ?? {}),
+      referenceAgent: "reference-review-api-agent",
+      runId: claimed.run.runId,
+      summary: resolvedEvaluation.summary,
+      verdict: resolvedEvaluation.verdict,
+      workerId: options.workerId,
+    };
+    const resultArtifact = createInlineJsonArtifact("agent-review-submission-result", {
+      claimId: claimed.task.claimId,
+      reportedBy: actorAddress,
+      taskId: claimed.task.taskId,
+      taskType: claimed.task.taskType,
+      ...submissionPayload,
+    });
     const signedSubmission = await createSignedAgentRequest({
       actionType: "review_task_submission",
-      actorAddress: options.actorAddress,
+      actorAddress,
       agentId: options.agentId,
       payload: {
-        confidenceBps: resolvedEvaluation.confidenceBps,
-        dimensions: resolvedEvaluation.dimensions,
-        issues: resolvedEvaluation.issues,
-        ...(resolvedEvaluation.payload ?? {}),
-        referenceAgent: "reference-review-api-agent",
-        runId: claimed.run.runId,
-        summary: resolvedEvaluation.summary,
-        verdict: resolvedEvaluation.verdict,
-        workerId: options.workerId,
+        ...submissionPayload,
+        resultArtifact,
       },
       requestNonce: randomUUID(),
       scopeKey: `review-task:${claimed.task.taskId}`,

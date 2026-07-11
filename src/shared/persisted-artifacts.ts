@@ -27,6 +27,7 @@ import { sha256Hex } from "./sha256.js";
 export { sha256Hex } from "./sha256.js";
 
 export const DEFAULT_ARTIFACT_STORE_ROOT = path.resolve(process.cwd(), "ops", "artifact-store");
+export const MAX_INLINE_JSON_ARTIFACT_BYTES = 64 * 1024;
 
 export type ArtifactContent = string | Uint8Array;
 export type ArtifactAuditKind = "agent_report" | "persist" | "verify";
@@ -443,6 +444,21 @@ function isHttpUrl(value: string): boolean {
   return value.startsWith("http://") || value.startsWith("https://");
 }
 
+function isInlineJsonUrl(value: string): boolean {
+  return value.startsWith("data:application/json;base64,");
+}
+
+function readInlineJsonUrl(value: string): Buffer {
+  if (!isInlineJsonUrl(value)) {
+    throw new Error("invalid inline JSON artifact URL");
+  }
+  const bytes = Buffer.from(value.slice("data:application/json;base64,".length), "base64");
+  if (bytes.byteLength > MAX_INLINE_JSON_ARTIFACT_BYTES) {
+    throw new Error("inline JSON artifact exceeds maximum size");
+  }
+  return bytes;
+}
+
 function isS3Url(value: string): boolean {
   return value.startsWith("s3://");
 }
@@ -462,6 +478,9 @@ function inferPrimaryReplicaProvider(
   }
   if (isHttpUrl(artifact.storagePath)) {
     return "http";
+  }
+  if (isInlineJsonUrl(artifact.storagePath)) {
+    return "inline";
   }
   return "filesystem";
 }
@@ -979,6 +998,22 @@ export async function persistJsonArtifact(
   );
 }
 
+export function createInlineJsonArtifact(kind: string, payload: unknown): PersistedArtifactRecord {
+  const bytes = Buffer.from(`${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  if (bytes.byteLength > MAX_INLINE_JSON_ARTIFACT_BYTES) {
+    throw new Error("inline JSON artifact exceeds maximum size");
+  }
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  return {
+    artifactKey: `${kind}-${sha256.slice(0, 16)}`,
+    byteLength: bytes.byteLength,
+    contentType: "application/json",
+    kind,
+    sha256: `0x${sha256}`,
+    storagePath: `data:application/json;base64,${bytes.toString("base64")}`,
+  };
+}
+
 async function readS3ArtifactBytes(
   artifact: Pick<PersistedArtifactRecord, "storagePath">,
   options: ArtifactPersistenceOptions,
@@ -1131,6 +1166,13 @@ export async function openPersistedArtifactReadStream(
   artifact: Pick<PersistedArtifactRecord, "byteLength" | "storagePath">,
   options: ArtifactPersistenceOptions = {},
 ): Promise<PersistedArtifactContentStream> {
+  if (isInlineJsonUrl(artifact.storagePath)) {
+    const bytes = readInlineJsonUrl(artifact.storagePath);
+    return {
+      contentLength: bytes.byteLength,
+      stream: Readable.from(bytes),
+    };
+  }
   if (isHttpUrl(artifact.storagePath)) {
     const response = await fetch(artifact.storagePath);
     if (!response.ok) {
@@ -1216,6 +1258,9 @@ export async function readPersistedArtifactBytes(
   artifact: Pick<PersistedArtifactRecord, "storagePath">,
   options: ArtifactPersistenceOptions = {},
 ): Promise<Buffer> {
+  if (isInlineJsonUrl(artifact.storagePath)) {
+    return readInlineJsonUrl(artifact.storagePath);
+  }
   if (isIpfsUrl(artifact.storagePath)) {
     const resolved = resolveArtifactPersistenceOptions(options);
     return resolved.ipfsClient.readObject(parseIpfsUrl(artifact.storagePath));
