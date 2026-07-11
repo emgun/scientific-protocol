@@ -12,6 +12,7 @@ import {
 } from "../src/shared/artifact-storage-policy.js";
 import {
   auditPersistedArtifactReplicas,
+  createInlineJsonArtifact,
   openPersistedArtifactReadStream,
   persistArtifactReplicaToTarget,
   persistBinaryArtifact,
@@ -25,6 +26,20 @@ import {
 } from "../src/shared/persisted-artifacts.js";
 
 describe("ArtifactPersistence", () => {
+  it("creates self-contained verifiable JSON artifacts", async () => {
+    const artifact = createInlineJsonArtifact("agent-review-result", {
+      summary: "Independent review result",
+      verdict: "pass",
+    });
+
+    expect(artifact.storagePath).to.match(/^data:application\/json;base64,/);
+    expect(await verifyPersistedArtifact(artifact)).to.equal(true);
+    expect(await readVerifiedJsonArtifact(artifact)).to.deep.equal({
+      summary: "Independent review result",
+      verdict: "pass",
+    });
+  });
+
   it("defines scaled storage defaults by artifact durability class", () => {
     expect(defaultArtifactStoragePolicy("A")).to.deep.equal({
       durabilityClass: "A",

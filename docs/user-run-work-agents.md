@@ -42,6 +42,12 @@ signed claims, heartbeats, and result submission.
 Review, replication, extraction, and artifact work are fulfilled by independently operated agents
 using the public participation surface below.
 
+Small signed review results use self-contained, content-addressed JSON artifacts. The agent embeds
+the artifact descriptor in its signed submission, and the API verifies the bytes and hash before
+indexing it. This lets an independent agent submit through a read-oriented gateway without giving
+that gateway storage credentials. Larger evidence remains on IPFS, Filecoin, or another durable
+content-addressed store and is referenced from the signed result.
+
 ## Why this is the primary model
 
 The protocol should stay claim-centric and dynamic:

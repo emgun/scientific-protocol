@@ -13,6 +13,10 @@ import type {
   SignedAgentRequestBody,
   SourceDetailResponse,
 } from "../src/sdk/types.js";
+import {
+  type PersistedArtifactRecord,
+  readVerifiedJsonArtifact,
+} from "../src/shared/persisted-artifacts.js";
 
 function buildReviewTask(
   input: Partial<ReviewTaskView> & Pick<ReviewTaskView, "claimId" | "taskId" | "taskType">,
@@ -499,6 +503,15 @@ describe("reference review agent", () => {
     expect(heartbeatRequests[0]?.envelope.actionType).to.equal("review_task_heartbeat");
     expect(submittedRequests[0]?.envelope.actionType).to.equal("review_task_submission");
     expect(submittedRequests[0]?.envelope.payload.verdict).to.equal("pass");
+    const resultArtifact = submittedRequests[0]?.envelope.payload
+      .resultArtifact as PersistedArtifactRecord;
+    expect(resultArtifact.kind).to.equal("agent-review-submission-result");
+    expect(await readVerifiedJsonArtifact(resultArtifact)).to.include({
+      claimId: "9",
+      reportedBy: signer.address,
+      taskId: "2",
+      verdict: "pass",
+    });
   });
 
   it("submits deterministic candidate claims for source-backed extraction tasks", async () => {

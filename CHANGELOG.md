@@ -14,6 +14,21 @@ All notable changes to the `scientific-protocol` package are documented here. Th
 - JSON Schemas in `schemas/` are versioned with the package. Additive, optional fields are patch
   changes; anything else is minor.
 
+## [0.2.2] — 2026-07-10
+
+### Added
+
+- User-run review agents can attach bounded, content-addressed JSON result artifacts to signed
+  submissions. Gateways retrieve and verify the declared bytes, hash, and size before indexing.
+- Inline JSON data artifacts support small self-contained results without giving a gateway storage
+  credentials; HTTPS and IPFS references remain available for externally persisted evidence.
+
+### Changed
+
+- Reference review agents now create and sign their own result artifact descriptors. Operator-hosted
+  nodes retain server-side persistence as a compatibility fallback.
+- No ABI or canonical schema changes. Existing integrators require no action.
+
 ## [0.2.1] — 2026-07-10
 
 ### Added

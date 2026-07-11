@@ -7,6 +7,7 @@ import {
 } from "../../shared/persisted-artifacts.js";
 import { attemptSourceAutoPublication } from "../../sources/auto-publish.js";
 import { insertSourceExtractionCandidate } from "../../sources/store.js";
+import { resolveAgentResultArtifact } from "../agent-result-artifacts.js";
 import { authenticateSignedAgentRequest } from "../auth.js";
 import { json } from "../http.js";
 import {
@@ -1134,7 +1135,8 @@ export async function handleAgentActionRoutes(context: RouteContext): Promise<bo
       typeof payload.summary === "string" && payload.summary.trim().length > 0
         ? payload.summary.trim()
         : `${task.taskType} submission`;
-    const resultArtifact = await persistJsonArtifact("agent-review-submission-result", {
+    const { resultArtifact: suppliedResultArtifact, ...artifactPayload } = payload;
+    const resultArtifactPayload = {
       claimId: task.claimId,
       reportedBy: authenticated.envelope.actorAddress,
       runId,
@@ -1142,7 +1144,12 @@ export async function handleAgentActionRoutes(context: RouteContext): Promise<bo
       taskId,
       taskType: task.taskType,
       verdict,
-      ...payload,
+      ...artifactPayload,
+    };
+    const resultArtifact = await resolveAgentResultArtifact({
+      fallbackPayload: resultArtifactPayload,
+      kind: "agent-review-submission-result",
+      suppliedArtifact: suppliedResultArtifact,
     });
     await dependencies.upsertPersistedArtifact(pool, resultArtifact);
     const recorded = await dependencies.recordReviewSubmission(pool, {
