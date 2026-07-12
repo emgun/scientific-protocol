@@ -27,6 +27,12 @@ governance, treasury, reward, reputation checkpoint, and market-related contract
 portable to Base-like Ethereum L2 deployments and are structured for future OP Stack appchain
 portability.
 
+The legacy bounty path binds reservations to a claim-local replication and its recorded replicator,
+requires resolution before release, and supports terminal cancellation. Agent budget spend limits
+are lifetime ceilings over consumed value plus outstanding reservations. These semantics are part
+of the contract ABI and require a new deployment rather than an in-place change to earlier
+non-upgradeable deployments.
+
 ### Schemas and Clients
 
 Canonical JSON schemas define claim, replication, evaluation, and artifact storage payloads. The

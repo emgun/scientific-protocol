@@ -1,6 +1,6 @@
 # Security Review
 
-Date: April 23, 2026 (updated June 10, 2026 after the market, appeals, and registry hardening pass)
+Date: April 23, 2026 (updated July 12, 2026 after the escrow, resolution, and agent-budget hardening pass)
 
 Use [current-state.md](./current-state.md) for the canonical architecture narrative. This
 document is narrower: it captures the current security posture and the still-open security work for
@@ -27,7 +27,7 @@ not the authority boundary.
 
 ### Reentrancy and value transfer
 
-- `BondEscrow`, `AgentRegistry`, and `ClaimRewardVault` use `SimpleReentrancyGuard` on
+- `BondEscrow`, `AgentRegistry`, and `ClaimRewardVault` use reentrancy guards on
   value-moving paths.
 - Value transfers occur after state updates in those contracts.
 - The unified reward layer uses pull-based recipient withdrawals through `ClaimRewardVault`.
@@ -54,6 +54,10 @@ not the authority boundary.
 - Author bond, bounty balance, and reserved bounty balance are tracked separately.
 - Reservations are single-use and cannot be released twice.
 - Reservation amount cannot exceed currently unreserved bounty balance.
+- Bounty reservations are bound to an existing replication under the named claim. The recipient
+  is derived from the replication submitter instead of supplied by the escrow administrator.
+- Reserved bounty can be released only after the replication has a recorded resolution. An escrow
+  administrator can terminally cancel an unreleased reservation without moving value.
 - Author bond slash and refund paths cannot exceed the tracked bond balance.
 - Reward settlements now have explicit settlement entries and pull-based withdrawal paths in the
   newer unified reward layer.
@@ -72,6 +76,11 @@ not the authority boundary.
   named claim before accepting value.
 - Resolution modules can be disabled by the module admin without rewriting claims already bound to
   them.
+- Resolution modules may reject by reverting or by returning `false`; either path leaves the
+  replication unresolved.
+- An agent spend limit is a lifetime ceiling over consumed value plus live reservations. Releasing
+  a reservation restores capacity, while consuming it permanently uses capacity. Raising the
+  ceiling is an explicit operator action; it cannot be lowered below committed value.
 
 ### Lifecycle safety
 

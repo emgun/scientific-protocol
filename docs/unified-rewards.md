@@ -110,6 +110,12 @@ content-addressed artifacts offchain.
 But the runtime is no longer built around “resolver drains the remaining replication bounty to the
 replicator on success.”
 
+For deployments that still use this legacy bounty path, a reservation is keyed to an existing
+claim-local replication, derives its recipient from that replication's submitter, and cannot be
+released before the replication is resolved. An escrow administrator may terminally cancel a
+mistaken reservation without transferring value. These constraints protect accounting and binding;
+they do not define which scientific outcomes deserve payment.
+
 The resolver path now records resolution only. Reward movement is handled by the claim reward
 vault and explicit reward settlement.
 
