@@ -1,8 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
-import { expect } from "chai";
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
+import { expect } from "chai";
 import { parse } from "yaml";
 import { PUBLIC_API_OPERATIONS } from "../src/api/public-contract.js";
 

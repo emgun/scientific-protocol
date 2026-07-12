@@ -22,7 +22,7 @@
   "main": "./dist/sdk/index.js",
   "types": "./dist/sdk/index.d.ts",
   "bin": {
-    "scientific-protocol-service": "./dist-service/service/cli.js"
+    "scientific-protocol-service": "./dist/service/cli.js"
   },
   "exports": {
     ".": {
@@ -34,8 +34,8 @@
       "import": "./dist/generated/contracts.js"
     },
     "./service": {
-      "types": "./dist-service/service/index.d.ts",
-      "import": "./dist-service/service/index.js"
+      "types": "./dist/service/index.d.ts",
+      "import": "./dist/service/index.js"
     },
     "./schemas/claim": "./schemas/claim.schema.json",
     "./schemas/replication": "./schemas/replication.schema.json",
@@ -45,7 +45,6 @@
   },
   "files": [
     "dist",
-    "dist-service",
     "ops/migrations",
     "schemas",
     "README.md"
@@ -118,6 +117,7 @@
     "@aws-sdk/xml-builder": "3.972.22",
     "fast-xml-parser": "5.8.0",
     "undici": "^6.24.0",
+    "uuid": "11.1.1",
     "ws": "8.21.0"
   }
 }

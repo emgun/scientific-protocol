@@ -5,7 +5,7 @@
     "declaration": true,
     "declarationMap": false,
     "noEmit": false,
-    "outDir": "dist-service",
+    "outDir": "dist",
     "rootDir": "src",
     "sourceMap": false
   },

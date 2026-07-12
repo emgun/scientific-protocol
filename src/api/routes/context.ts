@@ -1,9 +1,9 @@
 import type http from "node:http";
 import type { URL } from "node:url";
 import type { Pool } from "pg";
+import type { ServiceMode } from "../../service/mode.js";
 import type { ApiDependencies } from "../dependencies.js";
 import type { ApiRateLimitConfig, RateLimitRecord } from "../rate-limit.js";
-import type { ServiceMode } from "../../service/mode.js";
 
 export type RouteContext = {
   databaseUrl: string;

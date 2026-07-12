@@ -44,7 +44,7 @@ describe("reference service distribution", () => {
     expect(dockerfile).to.include("npm ci --omit=dev --ignore-scripts");
     expect(dockerfile).to.include("USER node");
     expect(dockerfile).to.include("HEALTHCHECK");
-    expect(dockerfile).to.include('CMD ["node", "dist-service/service/cli.js", "healthcheck"]');
+    expect(dockerfile).to.include('CMD ["node", "dist/service/cli.js", "healthcheck"]');
     expect(dockerfile).to.include("org.opencontainers.image.revision=$REVISION");
   });
 });

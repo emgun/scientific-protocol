@@ -5,7 +5,7 @@ export {
   assertWriteEnabled,
   resolveServiceMode,
   SERVICE_MODES,
-  serviceWritesEnabled,
   type ServiceMode,
+  serviceWritesEnabled,
 } from "./mode.js";
-export { serviceProvenance, type ServiceProvenance } from "./provenance.js";
+export { type ServiceProvenance, serviceProvenance } from "./provenance.js";

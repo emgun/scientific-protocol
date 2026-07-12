@@ -115,15 +115,9 @@ describe("protocol package boundary", () => {
 
     expect(packageJson.main).to.equal("./dist/sdk/index.js");
     expect(packageJson.types).to.equal("./dist/sdk/index.d.ts");
-    expect(files).to.include.members([
-      "README.md",
-      "schemas",
-      "dist",
-      "dist-service",
-      "ops/migrations",
-    ]);
+    expect(files).to.include.members(["README.md", "schemas", "dist", "ops/migrations"]);
     expect(packageJson.bin).to.deep.equal({
-      "scientific-protocol-service": "./dist-service/service/cli.js",
+      "scientific-protocol-service": "./dist/service/cli.js",
     });
     expect(files.some((file) => file === "src" || file.startsWith("src/"))).to.equal(false);
     for (const prefix of operatedServiceFilePrefixes) {
@@ -159,8 +153,8 @@ describe("protocol package boundary", () => {
   it("exports the compiled reference service entrypoint", () => {
     const packageJson = loadPackageJson();
     expect(packageJson.exports?.["./service"]).to.deep.equal({
-      types: "./dist-service/service/index.d.ts",
-      import: "./dist-service/service/index.js",
+      types: "./dist/service/index.d.ts",
+      import: "./dist/service/index.js",
     });
   });
 });

@@ -9,6 +9,7 @@ import {
   migrateReadModelDb,
   ReadModelSyncInProgressError,
 } from "../indexer/store.js";
+import { resolveServiceMode, type ServiceMode, serviceWritesEnabled } from "../service/mode.js";
 import { isMainModule, readBooleanEnv, readPositiveIntegerEnv } from "../shared/cli.js";
 import { getRpcUrl } from "../shared/contracts.js";
 import { getDeploymentPath } from "../shared/deployment.js";
@@ -47,7 +48,6 @@ import { handleRewardRoutes } from "./routes/rewards.js";
 import { handleSourceReadRoutes, handleSourceWriteRoutes } from "./routes/sources.js";
 import { handleOperatorRequestRoutes, handleSystemRoutes } from "./routes/system.js";
 import { handleWorkLifecycleRoutes, handleWorkReadRoutes } from "./routes/work.js";
-import { resolveServiceMode, serviceWritesEnabled, type ServiceMode } from "../service/mode.js";
 
 export type { ApiDependencies } from "./dependencies.js";
 export type {

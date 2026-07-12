@@ -1,3 +1,5 @@
+import { serviceWritesEnabled } from "../../service/mode.js";
+import { serviceProvenance } from "../../service/provenance.js";
 import { readEnvValue } from "../../shared/secrets.js";
 import { json } from "../http.js";
 import { parseIntegerParam } from "../params.js";
@@ -8,8 +10,6 @@ import {
   buildWriteProtocolConfigPayload,
 } from "../read-payloads.js";
 import type { RouteContext } from "./context.js";
-import { serviceProvenance } from "../../service/provenance.js";
-import { serviceWritesEnabled } from "../../service/mode.js";
 
 export async function handleSystemRoutes(context: RouteContext): Promise<boolean> {
   const {

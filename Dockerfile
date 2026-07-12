@@ -4,7 +4,7 @@ WORKDIR /app
 COPY package.json package-lock.json tsconfig.json tsconfig.service.json ./
 RUN npm ci
 COPY src ./src
-RUN npm run build:service
+RUN npx tsc -p tsconfig.service.json
 
 FROM node:22-bookworm-slim AS runtime
 
@@ -32,14 +32,14 @@ ENV NODE_ENV=production \
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
-COPY --from=build /app/dist-service ./dist-service
+COPY --from=build /app/dist ./dist
 COPY ops/migrations ./ops/migrations
 COPY schemas ./schemas
 RUN mkdir -p /var/lib/scientific-protocol/artifacts && chown -R node:node /var/lib/scientific-protocol
 
 USER node
 EXPOSE 3000
-ENTRYPOINT ["node", "dist-service/service/cli.js"]
+ENTRYPOINT ["node", "dist/service/cli.js"]
 CMD ["gateway"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD ["node", "dist-service/service/cli.js", "healthcheck"]
+  CMD ["node", "dist/service/cli.js", "healthcheck"]

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { getDatabaseUrl, createReadModelPool, migrateReadModelDb } from "../indexer/store.js";
+import { createReadModelPool, getDatabaseUrl, migrateReadModelDb } from "../indexer/store.js";
 import { isMainModule, readOptionalTrimmedEnv } from "../shared/cli.js";
 import { assertWriteEnabled, resolveServiceMode } from "./mode.js";
 import { serviceProvenance } from "./provenance.js";
@@ -69,9 +69,8 @@ async function runWorker(worker: string | undefined, env: NodeJS.ProcessEnv): Pr
     return;
   }
   if (worker === "artifact-maintenance") {
-    const { startArtifactMaintenanceWorkerFromEnv } =
-      await import("../workers/artifact-maintenance-worker.js");
-    await startArtifactMaintenanceWorkerFromEnv(env);
+    const workerModule = await import("../workers/artifact-maintenance-worker.js");
+    await workerModule.startArtifactMaintenanceWorkerFromEnv(env);
     return;
   }
   throw new Error(`unknown worker: ${worker ?? "(missing)"}`);
