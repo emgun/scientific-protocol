@@ -71,13 +71,20 @@ not the authority boundary.
 - Appeal bonds are outcome-dependent: lost appeals (`Rejected`, `Upheld`) forfeit to the protocol
   treasury, won or closed appeals are credited for pull-based withdrawal, so a reverting appellant
   contract cannot block adjudication.
-- New claims enforce a governance-set minimum author bond read from `ProtocolParameters`.
+- New claims enforce a governance-set minimum author bond read from `ProtocolParameters`, and the
+  complete claim-declared bond must be deposited before the claim can become `Published`.
 - Challenges and appeals validate that referenced replication and challenge ids belong to the
   named claim before accepting value.
 - Resolution modules can be disabled by the module admin without rewriting claims already bound to
   them.
 - Resolution modules may reject by reverting or by returning `false`; either path leaves the
   replication unresolved.
+- Resolution-derived claim statuses cannot be written directly. `ClaimRegistry` copies the result,
+  confidence, evidence, resolver type, module, replication, and claim linkage into an immutable
+  `ResolutionDecision`; later decisions remain recordable even when they cannot validly rewrite a
+  stronger or terminal claim state.
+- Forecast settlement consumes the claim's latest decision id and derives its outcome from that
+  record, eliminating the market settler's former independent status input.
 - An agent spend limit is a lifetime ceiling over consumed value plus live reservations. Releasing
   a reservation restores capacity, while consuming it permanently uses capacity. Raising the
   ceiling is an explicit operator action; it cannot be lowered below committed value.
@@ -85,6 +92,8 @@ not the authority boundary.
 ### Lifecycle safety
 
 - `ClaimRegistry` enforces an explicit status transition graph.
+- `ClaimRegistry` is bound once to the escrow and replication registry. This circular deployment
+  dependency is explicit and must be configured before deployment administration is renounced.
 - `ReplicationRegistry` prevents resolving a replication twice and validates module-specific status
   and resolver-type combinations before storing the result.
 - `ReputationCheckpointRegistry` validates claim, agent, and module subjects before publishing

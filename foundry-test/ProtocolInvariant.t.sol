@@ -163,9 +163,8 @@ contract EscrowHandler is Test {
     function progressClaimStatus(uint8 choice) external {
         ProtocolTypes.ClaimStatus currentStatus = claimRegistry.getClaim(claimId).status;
         if (currentStatus == ProtocolTypes.ClaimStatus.Published) {
-            ProtocolTypes.ClaimStatus[3] memory options = [
+            ProtocolTypes.ClaimStatus[2] memory options = [
                 ProtocolTypes.ClaimStatus.UnderReplication,
-                ProtocolTypes.ClaimStatus.Qualified,
                 ProtocolTypes.ClaimStatus.Deprecated
             ];
             vm.prank(admin);
@@ -173,26 +172,8 @@ contract EscrowHandler is Test {
             return;
         }
         if (currentStatus == ProtocolTypes.ClaimStatus.UnderReplication) {
-            ProtocolTypes.ClaimStatus[5] memory options = [
-                ProtocolTypes.ClaimStatus.ProvisionallySupported,
-                ProtocolTypes.ClaimStatus.Qualified,
-                ProtocolTypes.ClaimStatus.Refuted,
-                ProtocolTypes.ClaimStatus.Fraudulent,
-                ProtocolTypes.ClaimStatus.Deprecated
-            ];
             vm.prank(admin);
-            claimRegistry.setClaimStatus(claimId, options[choice % options.length]);
-            return;
-        }
-        if (currentStatus == ProtocolTypes.ClaimStatus.ProvisionallySupported) {
-            ProtocolTypes.ClaimStatus[4] memory options = [
-                ProtocolTypes.ClaimStatus.Qualified,
-                ProtocolTypes.ClaimStatus.Refuted,
-                ProtocolTypes.ClaimStatus.Fraudulent,
-                ProtocolTypes.ClaimStatus.Deprecated
-            ];
-            vm.prank(admin);
-            claimRegistry.setClaimStatus(claimId, options[choice % options.length]);
+            claimRegistry.setClaimStatus(claimId, ProtocolTypes.ClaimStatus.Deprecated);
         }
     }
 
@@ -228,6 +209,71 @@ interface ClaimRegistryLike {
     function setClaimStatus(uint256 claimId, ProtocolTypes.ClaimStatus newStatus) external;
 }
 
+contract PublicationHandler is Test {
+    ClaimRegistryLike internal immutable claimRegistry;
+    BondEscrowLike internal immutable bondEscrow;
+    address internal immutable admin;
+    address internal immutable author;
+    bool internal violated;
+
+    constructor(address claimRegistry_, address bondEscrow_, address admin_, address author_) {
+        claimRegistry = ClaimRegistryLike(claimRegistry_);
+        bondEscrow = BondEscrowLike(bondEscrow_);
+        admin = admin_;
+        author = author_;
+    }
+
+    function publicationAttempt(uint96 requiredSeed, uint96 depositSeed) external {
+        uint256 required = bound(uint256(requiredSeed), 1, 0.01 ether);
+        vm.prank(author);
+        (bool created, bytes memory result) = address(claimRegistry).call(
+            abi.encodeWithSignature(
+                "createClaim((bytes32,bytes32,bytes32,bytes32,bytes32,uint64,address),uint256,address)",
+                ProtocolTypes.ClaimSummary({
+                    statementHash: keccak256(abi.encodePacked("publication", requiredSeed)),
+                    methodologyHash: keccak256("method"),
+                    scopeHash: keccak256("scope"),
+                    metadataHash: keccak256("metadata"),
+                    predictionHooksHash: keccak256("hooks"),
+                    domainId: uint64(1),
+                    author: author
+                }),
+                required,
+                address(0)
+            )
+        );
+        if (!created) return;
+        uint256 claimId = abi.decode(result, (uint256));
+        uint256 deposit = bound(uint256(depositSeed), 0, required);
+        if (deposit != 0) {
+            vm.deal(author, author.balance + deposit);
+            vm.prank(author);
+            (bool deposited, ) = address(bondEscrow).call{value: deposit}(
+                abi.encodeWithSignature("depositAuthorBond(uint256)", claimId)
+            );
+            if (!deposited) return;
+        }
+        vm.prank(admin);
+        (bool published, ) = address(claimRegistry).call(
+            abi.encodeWithSignature(
+                "setClaimStatus(uint256,uint8)",
+                claimId,
+                ProtocolTypes.ClaimStatus.Published
+            )
+        );
+        if (!published) return;
+        ProtocolTypes.ClaimRecord memory claim = claimRegistry.getClaim(claimId);
+        if (
+            claim.status == ProtocolTypes.ClaimStatus.Published &&
+            bondEscrow.authorBondBalances(claimId) < required
+        ) violated = true;
+    }
+
+    function publicationGateViolated() external view returns (bool) {
+        return violated;
+    }
+}
+
 interface ReplicationRegistryLike {
     function nextReplicationId() external view returns (uint256);
     function submitReplication(
@@ -252,9 +298,6 @@ contract ProtocolInvariantTest is StdInvariant, ProtocolDeployer {
     function setUp() public {
         deployProtocol();
         claimId = createPublishedClaim(uint64(DOMAIN_COMPUTATIONAL), initialAuthorBond);
-
-        vm.prank(author);
-        bondEscrow.depositAuthorBond{value: initialAuthorBond}(claimId);
         vm.prank(admin);
         bondEscrow.fundReplicationBounty{value: initialBounty}(claimId);
 
@@ -290,5 +333,24 @@ contract ProtocolInvariantTest is StdInvariant, ProtocolDeployer {
     function invariant_ClaimAndReplicationIdsRemainMonotonic() public view {
         assertGe(claimRegistry.nextClaimId(), 2);
         assertGe(replicationRegistry.nextReplicationId(), 1);
+    }
+}
+
+contract PublicationInvariantTest is StdInvariant, ProtocolDeployer {
+    PublicationHandler internal handler;
+
+    function setUp() public {
+        deployProtocol();
+        handler = new PublicationHandler(
+            address(claimRegistry),
+            address(bondEscrow),
+            admin,
+            author
+        );
+        targetContract(address(handler));
+    }
+
+    function invariant_NoClaimPublishesBelowItsRequiredBond() public view {
+        assertFalse(handler.publicationGateViolated());
     }
 }

@@ -352,6 +352,13 @@ export async function deployLocalFromEnv(env: NodeJS.ProcessEnv = process.env): 
       deployTxOverrides,
     )) as UntypedContract;
     await bondEscrow.waitForDeployment();
+    await (
+      await claimRegistry.configureProtocolDependencies(
+        await bondEscrow.getAddress(),
+        await replicationRegistry.getAddress(),
+        setupTxOverrides,
+      )
+    ).wait();
 
     const ReputationCheckpointRegistry = getContractFactory(
       "ReputationCheckpointRegistry",

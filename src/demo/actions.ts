@@ -156,9 +156,6 @@ export async function createDemoClaim(
     throw new Error(`claim transaction ${createReceipt.hash} did not emit ClaimCreated`);
   }
 
-  const publishTx = await claimRegistryAsAdmin.setClaimStatus(BigInt(claimId), 1);
-  const publishReceipt = await publishTx.wait();
-
   const addArtifactTx = await artifactRegistry.addArtifact(
     BigInt(claimId),
     BigInt(artifactType),
@@ -178,6 +175,9 @@ export async function createDemoClaim(
     value: authorBond,
   });
   const depositReceipt = await depositTx.wait();
+
+  const publishTx = await claimRegistryAsAdmin.setClaimStatus(BigInt(claimId), 1);
+  const publishReceipt = await publishTx.wait();
 
   const bountyTx = await claimRewardVaultAsAdmin.fundClaimRewards(
     BigInt(claimId),

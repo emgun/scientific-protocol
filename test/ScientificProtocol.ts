@@ -192,6 +192,14 @@ async function deployProtocol() {
     await replicationRegistry.getAddress(),
   );
   await bondEscrow.waitForDeployment();
+  await (
+    await claimRegistry
+      .connect(admin)
+      .configureProtocolDependencies(
+        await bondEscrow.getAddress(),
+        await replicationRegistry.getAddress(),
+      )
+  ).wait();
 
   const CheckpointRegistry = await ethers.getContractFactory(
     "contracts/ReputationCheckpointRegistry.sol:ReputationCheckpointRegistry",
@@ -279,6 +287,84 @@ async function resolveReplication(
         evidenceURI: `ipfs://resolution/${replicationId.toString()}`,
       })
   ).wait();
+}
+
+async function satisfyBondAndPublishClaim(
+  protocol: Awaited<ReturnType<typeof deployProtocol>>,
+  claimId: number,
+) {
+  const requiredBond = await protocol.claimRegistry.getRequiredAuthorBond(claimId);
+  const currentBond = await protocol.bondEscrow.authorBondBalances(claimId);
+  if (currentBond < requiredBond) {
+    await (
+      await protocol.bondEscrow
+        .connect(protocol.author)
+        .depositAuthorBond(claimId, { value: requiredBond - currentBond })
+    ).wait();
+  }
+  await (
+    await protocol.claimRegistry
+      .connect(protocol.admin)
+      .setClaimStatus(claimId, CLAIM_STATUS.Published)
+  ).wait();
+}
+
+async function createCanonicalResolutionDecision(
+  protocol: Awaited<ReturnType<typeof deployProtocol>>,
+  claimId: number,
+  status: (typeof RESOLUTION_STATUS)[keyof typeof RESOLUTION_STATUS],
+) {
+  const claim = await protocol.claimRegistry.getClaim(claimId);
+  const resolverType =
+    claim.summary.domainId === 2n
+      ? RESOLVER_TYPE.WetLabCouncil
+      : claim.summary.domainId === 3n
+        ? RESOLVER_TYPE.BenchmarkOracle
+        : RESOLVER_TYPE.ComputationOracle;
+  if (claim.status === BigInt(CLAIM_STATUS.Draft)) {
+    await satisfyBondAndPublishClaim(protocol, claimId);
+  }
+  if ((await protocol.claimRegistry.getClaim(claimId)).status === BigInt(CLAIM_STATUS.Published)) {
+    await (
+      await protocol.claimRegistry
+        .connect(protocol.admin)
+        .setClaimStatus(claimId, CLAIM_STATUS.UnderReplication)
+    ).wait();
+  }
+  const replicationId = Number(await protocol.replicationRegistry.nextReplicationId());
+  await (
+    await protocol.replicationRegistry
+      .connect(protocol.replicator)
+      .submitReplication(
+        claimId,
+        ethers.keccak256(ethers.toUtf8Bytes(`decision-env-${replicationId}`)),
+        ethers.keccak256(ethers.toUtf8Bytes(`decision-result-${replicationId}`)),
+        ethers.keccak256(ethers.toUtf8Bytes(`decision-evidence-${replicationId}`)),
+        0,
+      )
+  ).wait();
+  await (
+    await protocol.replicationRegistry
+      .connect(protocol.admin)
+      .resolveReplicationOutcome(replicationId, {
+        status,
+        confidenceBps: 9_000,
+        resolutionHash: ethers.keccak256(
+          ethers.toUtf8Bytes(`decision-resolution-${replicationId}`),
+        ),
+        resolverType,
+        evidenceHash: ethers.keccak256(
+          ethers.toUtf8Bytes(`decision-resolution-evidence-${replicationId}`),
+        ),
+        evidenceURI: `ipfs://decision/${replicationId}`,
+      })
+  ).wait();
+  await (
+    await protocol.claimRegistry
+      .connect(protocol.admin)
+      .finalizeClaimResolution(claimId, replicationId)
+  ).wait();
+  return await protocol.claimRegistry.getLatestResolutionDecisionId(claimId);
 }
 
 describe("ClaimRegistry delegated submission", () => {
@@ -374,9 +460,7 @@ describe("ScientificProtocol", () => {
         .createClaim(makeClaimSummary(protocol.author.address, 1n), bondAmount, ethers.ZeroAddress)
     ).wait();
 
-    await (
-      await protocol.claimRegistry.connect(protocol.admin).setClaimStatus(1, CLAIM_STATUS.Published)
-    ).wait();
+    await satisfyBondAndPublishClaim(protocol, 1);
 
     await (
       await protocol.artifactRegistry
@@ -390,9 +474,6 @@ describe("ScientificProtocol", () => {
         )
     ).wait();
 
-    await (
-      await protocol.bondEscrow.connect(protocol.author).depositAuthorBond(1, { value: bondAmount })
-    ).wait();
     await (
       await protocol.bondEscrow
         .connect(protocol.admin)
@@ -429,7 +510,7 @@ describe("ScientificProtocol", () => {
     ).wait();
 
     await (
-      await protocol.claimRegistry.connect(protocol.admin).setClaimStatus(1, CLAIM_STATUS.Qualified)
+      await protocol.claimRegistry.connect(protocol.admin).finalizeClaimResolution(1, 1)
     ).wait();
     await (
       await protocol.bondEscrow.connect(protocol.admin).reserveBountyPayout(1, 1, bountyAmount)
@@ -456,7 +537,7 @@ describe("ScientificProtocol", () => {
     const replication = await protocol.replicationRegistry.getReplication(1);
     const checkpoint = await protocol.checkpointRegistry.getCheckpoint(1);
 
-    assert.equal(claim.status, 4n);
+    assert.equal(claim.status, 3n);
     assert.equal(replication.outcome, 1n);
     assert.equal(checkpoint.subjectClaimId, 1n);
     assert.equal(await protocol.bondEscrow.authorBondBalances(1), bondAmount);
@@ -474,9 +555,7 @@ describe("ScientificProtocol", () => {
           ethers.ZeroAddress,
         )
     ).wait();
-    await (
-      await protocol.claimRegistry.connect(protocol.admin).setClaimStatus(1, CLAIM_STATUS.Published)
-    ).wait();
+    await satisfyBondAndPublishClaim(protocol, 1);
 
     await (
       await protocol.replicationRegistry
@@ -514,9 +593,7 @@ describe("ScientificProtocol", () => {
           ethers.ZeroAddress,
         )
     ).wait();
-    await (
-      await protocol.claimRegistry.connect(protocol.admin).setClaimStatus(2, CLAIM_STATUS.Published)
-    ).wait();
+    await satisfyBondAndPublishClaim(protocol, 2);
     await (
       await protocol.replicationRegistry
         .connect(protocol.replicator)
@@ -944,10 +1021,13 @@ describe("ScientificProtocol", () => {
         .connect(protocol.author)
         .revealForecast(1, FORECAST_DIRECTION.Supports, 8_500, salt)
     ).wait();
+    const resolutionDecisionId = await createCanonicalResolutionDecision(
+      protocol,
+      1,
+      RESOLUTION_STATUS.Supported,
+    );
     await (
-      await protocol.epistemicMarket
-        .connect(protocol.admin)
-        .settleForecast(1, RESOLUTION_STATUS.Supported)
+      await protocol.epistemicMarket.connect(protocol.admin).settleForecast(1, resolutionDecisionId)
     ).wait();
 
     const challengeBond = ethers.parseEther("0.5");
@@ -1044,10 +1124,16 @@ describe("ScientificProtocol", () => {
     await ethers.provider.send("evm_increaseTime", [3700]);
     await ethers.provider.send("evm_mine", []);
 
+    const resolutionDecisionId = await createCanonicalResolutionDecision(
+      protocol,
+      1,
+      RESOLUTION_STATUS.Inconclusive,
+    );
+
     const poolBefore = await protocol.epistemicMarket.rewardPoolBalance();
     const settleTx = await protocol.epistemicMarket
       .connect(protocol.admin)
-      .settleForecast(1, RESOLUTION_STATUS.Inconclusive);
+      .settleForecast(1, resolutionDecisionId);
     const settleReceipt = await settleTx.wait();
     const settledLog = settleReceipt?.logs
       .map((log) => {
@@ -1119,9 +1205,7 @@ describe("ScientificProtocol", () => {
     const forecast = await protocol.epistemicMarket.getForecast(1);
     assert.equal(forecast.settled, true);
     await assert.rejects(
-      protocol.epistemicMarket
-        .connect(protocol.admin)
-        .settleForecast(1, RESOLUTION_STATUS.Supported),
+      protocol.epistemicMarket.connect(protocol.admin).settleForecast(1, 0),
       /EpistemicMarketAlreadySettled/,
     );
   });
@@ -1357,6 +1441,232 @@ describe("ScientificProtocol", () => {
     assert.equal(await protocol.claimRegistry.claimExists(1), true);
   });
 
+  it("requires the complete configured author bond before publication", async () => {
+    const protocol = await deployProtocol();
+    const requiredBond = ethers.parseEther("0.5");
+    await (
+      await protocol.claimRegistry
+        .connect(protocol.author)
+        .createClaim(
+          makeClaimSummary(protocol.author.address, 1n),
+          requiredBond,
+          ethers.ZeroAddress,
+        )
+    ).wait();
+
+    await assert.rejects(
+      protocol.claimRegistry.connect(protocol.admin).setClaimStatus(1, CLAIM_STATUS.Published),
+      /ClaimRegistryAuthorBondUnsatisfied/,
+    );
+    await (
+      await protocol.bondEscrow
+        .connect(protocol.author)
+        .depositAuthorBond(1, { value: ethers.parseEther("0.4") })
+    ).wait();
+    await assert.rejects(
+      protocol.claimRegistry.connect(protocol.admin).setClaimStatus(1, CLAIM_STATUS.Published),
+      /ClaimRegistryAuthorBondUnsatisfied/,
+    );
+    await (
+      await protocol.bondEscrow
+        .connect(protocol.author)
+        .depositAuthorBond(1, { value: ethers.parseEther("0.1") })
+    ).wait();
+
+    const receipt = await (
+      await protocol.claimRegistry.connect(protocol.admin).setClaimStatus(1, CLAIM_STATUS.Published)
+    ).wait();
+    assert.ok(
+      receipt?.logs.some((log) => {
+        try {
+          return protocol.claimRegistry.interface.parseLog(log)?.name === "ClaimStatusUpdated";
+        } catch {
+          return false;
+        }
+      }),
+    );
+    assert.equal((await protocol.claimRegistry.getClaim(1)).status, BigInt(CLAIM_STATUS.Published));
+
+    await assert.rejects(
+      protocol.claimRegistry
+        .connect(protocol.admin)
+        .configureProtocolDependencies(
+          await protocol.bondEscrow.getAddress(),
+          await protocol.replicationRegistry.getAddress(),
+        ),
+      /ClaimRegistryProtocolDependenciesAlreadyConfigured/,
+    );
+    await assert.rejects(
+      protocol.claimRegistry
+        .connect(protocol.other)
+        .configureProtocolDependencies(
+          await protocol.bondEscrow.getAddress(),
+          await protocol.replicationRegistry.getAddress(),
+        ),
+      /AccessManagedMissingRole/,
+    );
+  });
+
+  it("derives append-only canonical claim decisions from resolved replications", async () => {
+    const protocol = await deployProtocol();
+    await (
+      await protocol.claimRegistry
+        .connect(protocol.author)
+        .createClaim(
+          makeClaimSummary(protocol.author.address, 1n),
+          ethers.parseEther("0.25"),
+          ethers.ZeroAddress,
+        )
+    ).wait();
+    await satisfyBondAndPublishClaim(protocol, 1);
+    await (
+      await protocol.claimRegistry
+        .connect(protocol.admin)
+        .setClaimStatus(1, CLAIM_STATUS.UnderReplication)
+    ).wait();
+
+    for (const suffix of ["supported", "refuted"]) {
+      await (
+        await protocol.replicationRegistry
+          .connect(protocol.replicator)
+          .submitReplication(
+            1,
+            ethers.keccak256(ethers.toUtf8Bytes(`${suffix}-env`)),
+            ethers.keccak256(ethers.toUtf8Bytes(`${suffix}-result`)),
+            ethers.keccak256(ethers.toUtf8Bytes(`${suffix}-evidence`)),
+            0,
+          )
+      ).wait();
+    }
+
+    await assert.rejects(
+      protocol.claimRegistry.connect(protocol.admin).setClaimStatus(1, CLAIM_STATUS.Qualified),
+      /ClaimRegistryResolutionDecisionRequired/,
+    );
+    await assert.rejects(
+      protocol.claimRegistry.connect(protocol.admin).setClaimStatus(1, CLAIM_STATUS.Fraudulent),
+      /ClaimRegistryResolutionDecisionRequired/,
+    );
+    await assert.rejects(
+      protocol.claimRegistry.connect(protocol.admin).finalizeClaimResolution(1, 1),
+      /ClaimRegistryUnresolvedReplication/,
+    );
+    await assert.rejects(
+      protocol.claimRegistry.connect(protocol.other).finalizeClaimResolution(1, 1),
+      /AccessManagedMissingRole/,
+    );
+
+    await (
+      await protocol.replicationRegistry.connect(protocol.admin).resolveReplicationOutcome(1, {
+        status: RESOLUTION_STATUS.Supported,
+        confidenceBps: 9_200,
+        resolutionHash: ethers.keccak256(ethers.toUtf8Bytes("supported-resolution")),
+        resolverType: RESOLVER_TYPE.ComputationOracle,
+        evidenceHash: ethers.keccak256(ethers.toUtf8Bytes("supported-resolution-evidence")),
+        evidenceURI: "ipfs://resolution/supported",
+      })
+    ).wait();
+    const firstReceipt = await (
+      await protocol.claimRegistry.connect(protocol.admin).finalizeClaimResolution(1, 1)
+    ).wait();
+    assert.ok(
+      firstReceipt?.logs.some((log) => {
+        try {
+          return (
+            protocol.claimRegistry.interface.parseLog(log)?.name === "ResolutionDecisionRecorded"
+          );
+        } catch {
+          return false;
+        }
+      }),
+    );
+    const firstDecision = await protocol.claimRegistry.getResolutionDecision(1);
+    assert.equal(firstDecision.claimId, 1n);
+    assert.equal(firstDecision.replicationId, 1n);
+    assert.equal(firstDecision.status, BigInt(RESOLUTION_STATUS.Supported));
+    assert.equal(firstDecision.claimStatus, BigInt(CLAIM_STATUS.ProvisionallySupported));
+    assert.equal(firstDecision.confidenceBps, 9_200n);
+    assert.equal(
+      (await protocol.claimRegistry.getClaim(1)).status,
+      BigInt(CLAIM_STATUS.ProvisionallySupported),
+    );
+    await assert.rejects(
+      protocol.claimRegistry.connect(protocol.admin).finalizeClaimResolution(1, 1),
+      /ClaimRegistryReplicationDecisionExists/,
+    );
+
+    await (
+      await protocol.replicationRegistry.connect(protocol.admin).resolveReplicationOutcome(2, {
+        status: RESOLUTION_STATUS.Refuted,
+        confidenceBps: 8_700,
+        resolutionHash: ethers.keccak256(ethers.toUtf8Bytes("refuted-resolution")),
+        resolverType: RESOLVER_TYPE.ComputationOracle,
+        evidenceHash: ethers.keccak256(ethers.toUtf8Bytes("refuted-resolution-evidence")),
+        evidenceURI: "ipfs://resolution/refuted",
+      })
+    ).wait();
+    await (
+      await protocol.claimRegistry.connect(protocol.admin).finalizeClaimResolution(1, 2)
+    ).wait();
+
+    assert.equal(await protocol.claimRegistry.getLatestResolutionDecisionId(1), 2n);
+    assert.deepEqual(Array.from(await protocol.claimRegistry.getClaimResolutionDecisionIds(1)), [
+      1n,
+      2n,
+    ]);
+    const secondDecision = await protocol.claimRegistry.getResolutionDecision(2);
+    assert.equal(secondDecision.status, BigInt(RESOLUTION_STATUS.Refuted));
+    assert.equal(secondDecision.claimStatus, BigInt(CLAIM_STATUS.Refuted));
+    assert.equal((await protocol.claimRegistry.getClaim(1)).status, BigInt(CLAIM_STATUS.Refuted));
+
+    const thirdDecisionId = await createCanonicalResolutionDecision(
+      protocol,
+      1,
+      RESOLUTION_STATUS.Supported,
+    );
+    const thirdDecision = await protocol.claimRegistry.getResolutionDecision(thirdDecisionId);
+    assert.equal(thirdDecision.claimStatus, BigInt(CLAIM_STATUS.ProvisionallySupported));
+    assert.equal((await protocol.claimRegistry.getClaim(1)).status, BigInt(CLAIM_STATUS.Refuted));
+  });
+
+  it("maps every resolvable replication status to one canonical claim-status recommendation", async () => {
+    const protocol = await deployProtocol();
+    const mappings = [
+      [RESOLUTION_STATUS.Supported, CLAIM_STATUS.ProvisionallySupported],
+      [RESOLUTION_STATUS.Qualified, CLAIM_STATUS.Qualified],
+      [RESOLUTION_STATUS.Inconclusive, CLAIM_STATUS.UnderReplication],
+      [RESOLUTION_STATUS.Refuted, CLAIM_STATUS.Refuted],
+      [RESOLUTION_STATUS.FraudSignal, CLAIM_STATUS.Fraudulent],
+      [RESOLUTION_STATUS.Escalated, CLAIM_STATUS.UnderReplication],
+    ] as const;
+
+    await assert.rejects(
+      protocol.claimRegistry.getClaimStatusForResolution(RESOLUTION_STATUS.Pending),
+      /ClaimRegistryInvalidResolutionStatus/,
+    );
+
+    for (const [index, [resolutionStatus, expectedClaimStatus]] of mappings.entries()) {
+      assert.equal(
+        await protocol.claimRegistry.getClaimStatusForResolution(resolutionStatus),
+        BigInt(expectedClaimStatus),
+      );
+      const claimId = index + 1;
+      const domainId = resolutionStatus === RESOLUTION_STATUS.Escalated ? 2n : 1n;
+      await (
+        await protocol.claimRegistry
+          .connect(protocol.author)
+          .createClaim(makeClaimSummary(protocol.author.address, domainId), 0, ethers.ZeroAddress)
+      ).wait();
+      const decisionId = await createCanonicalResolutionDecision(
+        protocol,
+        claimId,
+        resolutionStatus,
+      );
+      const decision = await protocol.claimRegistry.getResolutionDecision(decisionId);
+      assert.equal(decision.claimStatus, BigInt(expectedClaimStatus));
+    }
+  });
+
   it("rejects same-status claim transitions", async () => {
     const protocol = await deployProtocol();
     await (
@@ -1368,9 +1678,7 @@ describe("ScientificProtocol", () => {
           ethers.ZeroAddress,
         )
     ).wait();
-    await (
-      await protocol.claimRegistry.connect(protocol.admin).setClaimStatus(1, CLAIM_STATUS.Published)
-    ).wait();
+    await satisfyBondAndPublishClaim(protocol, 1);
 
     await assert.rejects(
       protocol.claimRegistry.connect(protocol.admin).setClaimStatus(1, CLAIM_STATUS.Published),
@@ -1674,9 +1982,7 @@ describe("ScientificProtocol", () => {
           ethers.ZeroAddress,
         )
     ).wait();
-    await (
-      await protocol.claimRegistry.connect(protocol.admin).setClaimStatus(1, CLAIM_STATUS.Published)
-    ).wait();
+    await satisfyBondAndPublishClaim(protocol, 1);
 
     await (
       await protocol.replicationRegistry
@@ -1765,12 +2071,7 @@ describe("ScientificProtocol", () => {
     ).wait();
     assert.equal(await protocol.claimRegistry.nextClaimId(), 3n);
 
-    await (
-      await protocol.claimRegistry.connect(protocol.admin).setClaimStatus(1, CLAIM_STATUS.Published)
-    ).wait();
-    await (
-      await protocol.bondEscrow.connect(protocol.author).depositAuthorBond(1, { value: bondAmount })
-    ).wait();
+    await satisfyBondAndPublishClaim(protocol, 1);
     await (
       await protocol.bondEscrow
         .connect(protocol.admin)
@@ -2064,9 +2365,7 @@ describe("ScientificProtocol", () => {
           ethers.ZeroAddress,
         )
     ).wait();
-    await (
-      await protocol.claimRegistry.connect(protocol.admin).setClaimStatus(1, CLAIM_STATUS.Published)
-    ).wait();
+    await satisfyBondAndPublishClaim(protocol, 1);
     await (
       await protocol.bondEscrow
         .connect(protocol.admin)
@@ -2132,40 +2431,13 @@ describe("ScientificProtocol", () => {
     }
   });
 
-  it("accepts randomized valid claim status paths and rejects invalid transitions", async () => {
+  it("accepts randomized administrative claim paths and rejects outcome bypasses", async () => {
     const protocol = await deployProtocol();
     const rng = createDeterministicRng(7);
     const allowedTransitions = new Map<number, number[]>([
       [CLAIM_STATUS.Draft, [CLAIM_STATUS.Published, CLAIM_STATUS.Deprecated]],
-      [
-        CLAIM_STATUS.Published,
-        [CLAIM_STATUS.UnderReplication, CLAIM_STATUS.Qualified, CLAIM_STATUS.Deprecated],
-      ],
-      [
-        CLAIM_STATUS.UnderReplication,
-        [
-          CLAIM_STATUS.ProvisionallySupported,
-          CLAIM_STATUS.Qualified,
-          CLAIM_STATUS.Refuted,
-          CLAIM_STATUS.Fraudulent,
-          CLAIM_STATUS.Deprecated,
-        ],
-      ],
-      [
-        CLAIM_STATUS.ProvisionallySupported,
-        [
-          CLAIM_STATUS.Qualified,
-          CLAIM_STATUS.Refuted,
-          CLAIM_STATUS.Fraudulent,
-          CLAIM_STATUS.Deprecated,
-        ],
-      ],
-      [
-        CLAIM_STATUS.Qualified,
-        [CLAIM_STATUS.Refuted, CLAIM_STATUS.Fraudulent, CLAIM_STATUS.Deprecated],
-      ],
-      [CLAIM_STATUS.Refuted, [CLAIM_STATUS.Deprecated]],
-      [CLAIM_STATUS.Fraudulent, [CLAIM_STATUS.Deprecated]],
+      [CLAIM_STATUS.Published, [CLAIM_STATUS.UnderReplication, CLAIM_STATUS.Deprecated]],
+      [CLAIM_STATUS.UnderReplication, [CLAIM_STATUS.Deprecated]],
     ]);
 
     for (let claimIndex = 0; claimIndex < 6; claimIndex += 1) {
@@ -2185,9 +2457,13 @@ describe("ScientificProtocol", () => {
         const allowed = allowedTransitions.get(currentStatus);
         assert.ok(allowed);
         const nextStatus = allowed[Math.floor(rng() * allowed.length)];
-        await (
-          await protocol.claimRegistry.connect(protocol.admin).setClaimStatus(claimId, nextStatus)
-        ).wait();
+        if (nextStatus === CLAIM_STATUS.Published) {
+          await satisfyBondAndPublishClaim(protocol, claimId);
+        } else {
+          await (
+            await protocol.claimRegistry.connect(protocol.admin).setClaimStatus(claimId, nextStatus)
+          ).wait();
+        }
         const claim = await protocol.claimRegistry.getClaim(claimId);
         assert.equal(Number(claim.status), nextStatus);
 
@@ -2207,11 +2483,7 @@ describe("ScientificProtocol", () => {
         }
 
         currentStatus = nextStatus;
-        if (
-          currentStatus === CLAIM_STATUS.Deprecated ||
-          currentStatus === CLAIM_STATUS.Refuted ||
-          currentStatus === CLAIM_STATUS.Fraudulent
-        ) {
+        if (currentStatus === CLAIM_STATUS.Deprecated) {
           break;
         }
       }

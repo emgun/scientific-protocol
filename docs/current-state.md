@@ -33,6 +33,13 @@ are lifetime ceilings over consumed value plus outstanding reservations. These s
 of the contract ABI and require a new deployment rather than an in-place change to earlier
 non-upgradeable deployments.
 
+Publication is economically gated: the complete author-declared bond must be present before a
+claim enters `Published`. Resolution is evidence-linked through append-only `ResolutionDecision`
+records copied from resolved replications. Direct writes cannot manufacture outcome-derived claim
+states, and forecast settlement references the latest claim decision instead of accepting a second
+status input. Multiple replication decisions remain auditable; claim status only moves along valid
+forward transitions.
+
 ### Schemas and Clients
 
 Canonical JSON schemas define claim, replication, evaluation, and artifact storage payloads. The

@@ -291,11 +291,10 @@ export async function resolveReplicationJob(
         resolverType: proposedResolution.resolverType,
       });
       const txHashes: string[] = [];
-      let currentClaimStatus = Number(claimRecord.status);
-      currentClaimStatus = await maybeMoveClaimIntoReplication(
+      await maybeMoveClaimIntoReplication(
         claimRegistry,
         claimIdBigInt,
-        currentClaimStatus,
+        Number(claimRecord.status),
         txHashes,
       );
 
@@ -312,16 +311,11 @@ export async function resolveReplicationJob(
       );
       txHashes.push((await resolutionTx.wait()).hash);
 
-      if (
-        proposedResolution.claimStatus !== null &&
-        proposedResolution.claimStatus !== currentClaimStatus
-      ) {
-        const claimStatusTx = await claimRegistry.setClaimStatus(
-          claimIdBigInt,
-          proposedResolution.claimStatus,
-        );
-        txHashes.push((await claimStatusTx.wait()).hash);
-      }
+      const decisionTx = await claimRegistry.finalizeClaimResolution(
+        claimIdBigInt,
+        replicationIdBigInt,
+      );
+      txHashes.push((await decisionTx.wait()).hash);
 
       await pool.query(
         `

@@ -41,14 +41,15 @@ export type ProductionClaimResult = {
   txHashes: {
     addArtifact: string;
     createClaim: string;
+    depositAuthorBond: string | null;
     publishClaim: string;
   };
 };
 
 export type ProductionClaimReadyCheckpoint = Pick<
   ProductionClaimResult,
-  "artifactId" | "claimId" | "txHashes"
->;
+  "artifactId" | "claimId"
+> & { txHashes: Record<string, string> };
 
 export type ProductionArtifactDraftInput = ArtifactDraftInput;
 export type ProductionArtifactDraftResult = SourceIngestionResult;
@@ -86,14 +87,38 @@ export async function createProductionClaim(
     ["SP_RESOLVER_PRIVATE_KEY", "SP_PROTOCOL_ADMIN_PRIVATE_KEY", "SP_OPERATOR_PRIVATE_KEY"],
     { env, localAccountIndex: 4 },
   );
-
-  const [claimRegistryAsSubmitter, claimRegistryAsResolver, artifactRegistry] = await Promise.all([
-    getContract("ClaimRegistry", deployment.addresses.claimRegistry, submitterSigner),
-    getContract("ClaimRegistry", deployment.addresses.claimRegistry, resolverSigner),
-    getContract("ArtifactRegistry", deployment.addresses.artifactRegistry, submitterSigner),
-  ]);
-
   const submittedBy = await submitterSigner.getAddress();
+  let bondSigner =
+    submittedBy.toLowerCase() === authorAddress.toLowerCase() ? submitterSigner : null;
+  if (authorBond > 0n && !bondSigner) {
+    try {
+      const authorSigner = createManagedOperatorSigner(
+        ["SP_CLAIM_AUTHOR_PRIVATE_KEY", "SP_OPERATOR_PRIVATE_KEY"],
+        { env, localAccountIndex: 1 },
+      );
+      if ((await authorSigner.getAddress()).toLowerCase() === authorAddress.toLowerCase()) {
+        bondSigner = authorSigner;
+      }
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.startsWith("missing operator private key")) {
+        throw error;
+      }
+    }
+  }
+  if (authorBond > 0n && !bondSigner) {
+    throw new Error("author_bond_signer_required");
+  }
+
+  const [claimRegistryAsSubmitter, claimRegistryAsResolver, artifactRegistry, bondEscrow] =
+    await Promise.all([
+      getContract("ClaimRegistry", deployment.addresses.claimRegistry, submitterSigner),
+      getContract("ClaimRegistry", deployment.addresses.claimRegistry, resolverSigner),
+      getContract("ArtifactRegistry", deployment.addresses.artifactRegistry, submitterSigner),
+      bondSigner
+        ? getContract("BondEscrow", deployment.addresses.bondEscrow, bondSigner)
+        : Promise.resolve(null),
+    ]);
+
   const statement = resolveNonEmptyStringInput(input.statement, "Untitled claim");
   const methodology = resolveNonEmptyStringInput(input.methodology, "production-methodology");
   const scope = resolveNonEmptyStringInput(input.scope, "production-scope");
@@ -124,9 +149,6 @@ export async function createProductionClaim(
     throw new Error(`claim transaction ${createReceipt.hash} did not emit ClaimCreated`);
   }
 
-  const publishTx = await claimRegistryAsResolver.setClaimStatus(BigInt(claimId), 1);
-  const publishReceipt = await publishTx.wait();
-
   const addArtifactTx = await artifactRegistry.addArtifact(
     BigInt(claimId),
     BigInt(artifactType),
@@ -141,6 +163,13 @@ export async function createProductionClaim(
     "ArtifactAdded",
     "artifactId",
   );
+
+  const depositReceipt =
+    authorBond > 0n && bondEscrow
+      ? await (await bondEscrow.depositAuthorBond(BigInt(claimId), { value: authorBond })).wait()
+      : null;
+  const publishTx = await claimRegistryAsResolver.setClaimStatus(BigInt(claimId), 1);
+  const publishReceipt = await publishTx.wait();
 
   let job: ReplicationJobView | null = null;
   if (input.openReplicationJob) {
@@ -175,13 +204,18 @@ export async function createProductionClaim(
     txHashes: {
       addArtifact: addArtifactReceipt.hash,
       createClaim: createReceipt.hash,
+      depositAuthorBond: depositReceipt?.hash ?? null,
       publishClaim: publishReceipt.hash,
     },
   };
   await options.onClaimReady?.({
     artifactId: result.artifactId,
     claimId: result.claimId,
-    txHashes: result.txHashes,
+    txHashes: Object.fromEntries(
+      Object.entries(result.txHashes).filter(
+        (entry): entry is [string, string] => entry[1] !== null,
+      ),
+    ),
   });
   return result;
 }

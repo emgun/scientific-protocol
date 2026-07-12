@@ -12,15 +12,17 @@ contract MarketHandler is Test {
     EpistemicMarket internal immutable market;
     address internal immutable admin;
     uint256 internal immutable claimId;
+    uint256 internal immutable resolutionDecisionId;
 
     mapping(uint256 forecastId => bytes32 salt) internal salts;
     mapping(uint256 forecastId => ProtocolTypes.ForecastDirection direction) internal directions;
     mapping(uint256 forecastId => uint16 confidenceBps) internal confidences;
 
-    constructor(address market_, address admin_, uint256 claimId_) {
+    constructor(address market_, address admin_, uint256 claimId_, uint256 resolutionDecisionId_) {
         market = EpistemicMarket(market_);
         admin = admin_;
         claimId = claimId_;
+        resolutionDecisionId = resolutionDecisionId_;
     }
 
     receive() external payable {}
@@ -66,7 +68,7 @@ contract MarketHandler is Test {
         );
     }
 
-    function settleForecast(uint256 forecastSeed, uint256 statusSeed) external {
+    function settleForecast(uint256 forecastSeed) external {
         uint256 forecastId = _pickForecast(forecastSeed);
         if (forecastId == 0) {
             return;
@@ -79,7 +81,7 @@ contract MarketHandler is Test {
             return;
         }
         vm.prank(admin);
-        market.settleForecast(forecastId, ProtocolTypes.ResolutionStatus(bound(statusSeed, 0, 6)));
+        market.settleForecast(forecastId, resolutionDecisionId);
     }
 
     function reclaimForecast(uint256 forecastSeed) external {
@@ -180,12 +182,38 @@ contract MarketHandler is Test {
 
 contract MarketInvariantTest is StdInvariant, ProtocolDeployer {
     MarketHandler internal handler;
+    uint256 internal canonicalDecisionId;
 
     function setUp() public {
         deployProtocol();
         uint256 claimId = createPublishedClaim(uint64(DOMAIN_COMPUTATIONAL), 1 ether);
 
-        handler = new MarketHandler(address(epistemicMarket), admin, claimId);
+        vm.prank(admin);
+        claimRegistry.setClaimStatus(claimId, ProtocolTypes.ClaimStatus.UnderReplication);
+        vm.prank(replicator);
+        uint256 replicationId = replicationRegistry.submitReplication(
+            claimId,
+            keccak256("market-env"),
+            keccak256("market-result"),
+            keccak256("market-evidence"),
+            0
+        );
+        vm.prank(admin);
+        replicationRegistry.resolveReplicationOutcome(
+            replicationId,
+            ProtocolTypes.ResolutionResult({
+                status: ProtocolTypes.ResolutionStatus.Supported,
+                confidenceBps: 9_000,
+                resolutionHash: keccak256("market-resolution"),
+                resolverType: ProtocolTypes.ResolverType.ComputationOracle,
+                evidenceHash: keccak256("market-resolution-evidence"),
+                evidenceURI: "ipfs://market-resolution"
+            })
+        );
+        vm.prank(admin);
+        canonicalDecisionId = claimRegistry.finalizeClaimResolution(claimId, replicationId);
+
+        handler = new MarketHandler(address(epistemicMarket), admin, claimId, canonicalDecisionId);
         vm.deal(address(handler), 1_000 ether);
         targetContract(address(handler));
     }
@@ -196,6 +224,27 @@ contract MarketInvariantTest is StdInvariant, ProtocolDeployer {
         assertEq(
             address(epistemicMarket).balance,
             epistemicMarket.rewardPoolBalance() + handler.outstandingObligations()
+        );
+    }
+
+    /// @dev The decision consumed by the market must remain an exact append-only copy of the
+    /// resolved replication, never a second independently writable outcome.
+    function invariant_MarketDecisionMatchesResolvedReplication() public view {
+        ProtocolTypes.ResolutionDecision memory decision = claimRegistry.getResolutionDecision(
+            canonicalDecisionId
+        );
+        ProtocolTypes.ReplicationRecord memory replication = replicationRegistry.getReplication(
+            decision.replicationId
+        );
+        assertEq(decision.claimId, replication.claimId);
+        assertEq(uint256(decision.status), uint256(replication.resolutionStatus));
+        assertEq(decision.confidenceBps, replication.confidenceBps);
+        assertEq(decision.resolutionHash, replication.resolutionHash);
+        assertEq(decision.evidenceHash, replication.resolutionEvidenceHash);
+        assertEq(uint256(decision.resolverType), uint256(replication.resolverType));
+        assertEq(
+            claimRegistry.getLatestResolutionDecisionId(decision.claimId),
+            canonicalDecisionId
         );
     }
 }

@@ -145,7 +145,7 @@ contract ReplicationRegistry is AccessManaged, IReplicationRegistry {
 
     function getReplication(
         uint256 replicationId
-    ) external view returns (ProtocolTypes.ReplicationRecord memory) {
+    ) external view override returns (ProtocolTypes.ReplicationRecord memory) {
         ProtocolTypes.ReplicationRecord memory replication = _replications[replicationId];
         if (replication.replicationId == 0) {
             revert ReplicationRegistryUnknownReplication(replicationId);

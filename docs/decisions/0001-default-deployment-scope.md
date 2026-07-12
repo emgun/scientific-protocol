@@ -22,14 +22,17 @@ Keep the v0.2 default deployment surface intact for compatibility. The escrow, r
 and agent-budget corrections in this release require a new non-upgradeable deployment, but they do
 not silently remove or redesign markets, appeals, governance, or treasury authority.
 
-Before a vNext ABI freeze, decide explicitly whether `EpistemicMarket` and `AppealsRegistry` are:
+Version 0.3 establishes the required causal link for `EpistemicMarket`: forecast settlement consumes
+the latest append-only claim resolution decision and cannot supply an independent outcome. Before a
+later ABI freeze, decide explicitly whether `EpistemicMarket` and `AppealsRegistry` are:
 
 1. required core contracts with complete causal links to canonical resolution decisions; or
 2. experimental optional modules with nullable deployment-manifest addresses, feature discovery,
    conditional indexer/API wiring, and separate deployment flags.
 
-Until that decision is implemented end to end, deployments must label market and appeal outcomes
-as separate protocol records rather than implying that they supersede claim resolution.
+Until the optional-module decision is implemented end to end, appeals remain separate protocol
+records and must not be described as superseding claim resolution. Market forecasts are derivative
+records causally settled against claim resolution, not an alternate truth-voting mechanism.
 
 ## Consequences
 

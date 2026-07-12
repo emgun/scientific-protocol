@@ -26,6 +26,14 @@ All notable changes to the `scientific-protocol` package are documented here. Th
   outstanding reservations and cannot be reduced below that committed amount.
 - `ReplicationRegistry` rejects modules that return `false` and exposes replication submitter and
   resolution-state reads through `IReplicationRegistry`.
+- `ClaimRegistry` must be bound once to `BondEscrow` and `ReplicationRegistry` with
+  `configureProtocolDependencies`. A claim cannot enter `Published` until its complete declared
+  author bond is deposited.
+- Resolved replications now produce append-only `ResolutionDecision` records through
+  `finalizeClaimResolution`. Direct writes to resolution-derived claim statuses are rejected.
+- `EpistemicMarket.settleForecast` now accepts the latest claim `resolutionDecisionId`, not a
+  caller-supplied resolution status. `ForecastCommitment` and `ForecastSettled` expose that causal
+  decision id.
 
 These contracts are non-upgradeable. Existing deployments remain readable history but cannot be
 relabelled as 0.3.0. Operators must deploy the complete 0.3.0 contract set and update deployment
@@ -40,6 +48,10 @@ metadata. See [docs/migrations/0.3.0.md](docs/migrations/0.3.0.md).
 - Explicit `read-only` and `write-enabled` gateway modes, `/livez`, `/readyz`, release provenance,
   and migration-aware readiness.
 - Executable JSON Schema compilation and OpenAPI/public-route conformance tests.
+- A public canonical resolution-status mapping. `Supported` recommends
+  `ProvisionallySupported`, `Qualified` recommends `Qualified`, `Inconclusive` and `Escalated`
+  recommend `UnderReplication`, and `Refuted`/`FraudSignal` recommend their matching terminal
+  outcome. `Pending` is not finalizable.
 
 ### Changed
 
@@ -48,6 +60,9 @@ metadata. See [docs/migrations/0.3.0.md](docs/migrations/0.3.0.md).
 - OpenAPI is versioned at 0.3.0 and correctly models GET and POST as operations on `/sources`.
 - API processes no longer run migrations implicitly; operators run the explicit migration command
   as a release step.
+- Claim publication flows deposit the declared author bond before requesting `Published`. The
+  operated submission path fails before creating a claim when a nonzero bond is required but no
+  configured signer controls the declared author address.
 
 ## [0.2.2] — 2026-07-10
 

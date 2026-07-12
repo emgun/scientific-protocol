@@ -84,6 +84,10 @@ abstract contract ProtocolDeployer is Test {
             address(claimRegistry),
             address(replicationRegistry)
         );
+        claimRegistry.configureProtocolDependencies(
+            address(bondEscrow),
+            address(replicationRegistry)
+        );
         checkpointRegistry = new ReputationCheckpointRegistry(
             address(accessController),
             address(claimRegistry),
@@ -139,6 +143,11 @@ abstract contract ProtocolDeployer is Test {
             authorBondAmount,
             address(0)
         );
+
+        if (authorBondAmount != 0) {
+            vm.prank(author);
+            bondEscrow.depositAuthorBond{value: authorBondAmount}(claimId);
+        }
 
         vm.prank(admin);
         claimRegistry.setClaimStatus(claimId, ProtocolTypes.ClaimStatus.Published);

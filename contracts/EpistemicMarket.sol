@@ -11,6 +11,8 @@ import {IAgentRegistry} from "./interfaces/IAgentRegistry.sol";
 import {IEpistemicMarket} from "./interfaces/IEpistemicMarket.sol";
 import {IReplicationRegistry} from "./interfaces/IReplicationRegistry.sol";
 
+/// @title EpistemicMarket
+/// @notice Forecast and challenge records settled against canonical claim decisions.
 contract EpistemicMarket is DepositPausable, ReentrancyGuard, IEpistemicMarket {
     error EpistemicMarketUnknownClaim(uint256 claimId);
     error EpistemicMarketUnknownForecast(uint256 forecastId);
@@ -29,6 +31,17 @@ contract EpistemicMarket is DepositPausable, ReentrancyGuard, IEpistemicMarket {
     error EpistemicMarketChallengeWithdrawLocked(uint256 challengeId, uint256 unlockAt);
     error EpistemicMarketTransferFailed(address recipient, uint256 amount);
     error EpistemicMarketInvalidConfidence(uint16 confidenceBps);
+    error EpistemicMarketUnknownResolutionDecision(uint256 decisionId);
+    error EpistemicMarketResolutionDecisionClaimMismatch(
+        uint256 decisionId,
+        uint256 expectedClaimId,
+        uint256 actualClaimId
+    );
+    error EpistemicMarketStaleResolutionDecision(
+        uint256 claimId,
+        uint256 requestedDecisionId,
+        uint256 latestDecisionId
+    );
 
     struct ForecastCommitment {
         uint256 forecastId;
@@ -43,6 +56,7 @@ contract EpistemicMarket is DepositPausable, ReentrancyGuard, IEpistemicMarket {
         bool settled;
         ProtocolTypes.ForecastDirection direction;
         uint16 confidenceBps;
+        uint256 resolutionDecisionId;
     }
 
     struct ChallengeBond {
@@ -78,6 +92,7 @@ contract EpistemicMarket is DepositPausable, ReentrancyGuard, IEpistemicMarket {
     );
     event ForecastSettled(
         uint256 indexed forecastId,
+        uint256 indexed resolutionDecisionId,
         ProtocolTypes.ResolutionStatus finalStatus,
         bool matched,
         uint256 payoutAmount,
@@ -180,7 +195,8 @@ contract EpistemicMarket is DepositPausable, ReentrancyGuard, IEpistemicMarket {
             revealed: false,
             settled: false,
             direction: ProtocolTypes.ForecastDirection.Questions,
-            confidenceBps: 0
+            confidenceBps: 0,
+            resolutionDecisionId: 0
         });
 
         emit ForecastCommitted(
@@ -231,16 +247,15 @@ contract EpistemicMarket is DepositPausable, ReentrancyGuard, IEpistemicMarket {
         emit ForecastRevealed(forecastId, direction, confidenceBps, msg.sender);
     }
 
-    /// @notice Settles a forecast after claim evidence has reached a resolver-determined status.
-    /// @dev Trust assumption: the settler role solely determines `finalStatus`; the contract does
-    /// not re-derive it from claim state. The role is expected to be held by the timelocked
-    /// operator pipeline, not an EOA with discretionary power.
+    /// @notice Settles a forecast against the claim's latest canonical resolution decision.
+    /// @dev The market settler chooses when to settle but cannot supply independent outcome,
+    /// fraud, or confidence state.
     /// An unrevealed forecast can only be settled after its reveal window closes, and it always
     /// forfeits its stake to the reward pool. Refunding unrevealed stakes would let a forecaster
     /// commit opposite forecasts and reveal only the winner for a free option.
     function settleForecast(
         uint256 forecastId,
-        ProtocolTypes.ResolutionStatus finalStatus
+        uint256 resolutionDecisionId
     ) external onlyRole(ProtocolRoles.MARKET_SETTLER_ROLE) nonReentrant {
         ForecastCommitment storage forecast = _forecasts[forecastId];
         if (forecast.forecastId == 0) {
@@ -252,8 +267,31 @@ contract EpistemicMarket is DepositPausable, ReentrancyGuard, IEpistemicMarket {
         if (!forecast.revealed && block.timestamp <= forecast.revealDeadline) {
             revert EpistemicMarketRevealWindowOpen(forecastId);
         }
+        uint256 latestDecisionId = claimRegistry.getLatestResolutionDecisionId(forecast.claimId);
+        if (latestDecisionId == 0) {
+            revert EpistemicMarketUnknownResolutionDecision(resolutionDecisionId);
+        }
+        if (resolutionDecisionId != latestDecisionId) {
+            revert EpistemicMarketStaleResolutionDecision(
+                forecast.claimId,
+                resolutionDecisionId,
+                latestDecisionId
+            );
+        }
+        ProtocolTypes.ResolutionDecision memory decision = claimRegistry.getResolutionDecision(
+            resolutionDecisionId
+        );
+        if (decision.claimId != forecast.claimId) {
+            revert EpistemicMarketResolutionDecisionClaimMismatch(
+                resolutionDecisionId,
+                forecast.claimId,
+                decision.claimId
+            );
+        }
 
         forecast.settled = true;
+        forecast.resolutionDecisionId = resolutionDecisionId;
+        ProtocolTypes.ResolutionStatus finalStatus = decision.status;
         bool matched = forecast.revealed && _forecastMatches(forecast.direction, finalStatus);
         uint256 payoutAmount;
 
@@ -269,7 +307,14 @@ contract EpistemicMarket is DepositPausable, ReentrancyGuard, IEpistemicMarket {
             rewardPoolBalance += forecast.stakeAmount;
         }
 
-        emit ForecastSettled(forecastId, finalStatus, matched, payoutAmount, msg.sender);
+        emit ForecastSettled(
+            forecastId,
+            resolutionDecisionId,
+            finalStatus,
+            matched,
+            payoutAmount,
+            msg.sender
+        );
     }
 
     /// @notice Reclaims the stake of a revealed forecast that the settler never settled.
@@ -298,6 +343,7 @@ contract EpistemicMarket is DepositPausable, ReentrancyGuard, IEpistemicMarket {
         _safeTransferValue(forecast.forecaster, forecast.stakeAmount);
         emit ForecastSettled(
             forecastId,
+            0,
             ProtocolTypes.ResolutionStatus.Pending,
             false,
             forecast.stakeAmount,
