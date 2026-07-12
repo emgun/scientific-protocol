@@ -8,6 +8,8 @@ import {
   buildWriteProtocolConfigPayload,
 } from "../read-payloads.js";
 import type { RouteContext } from "./context.js";
+import { serviceProvenance } from "../../service/provenance.js";
+import { serviceWritesEnabled } from "../../service/mode.js";
 
 export async function handleSystemRoutes(context: RouteContext): Promise<boolean> {
   const {
@@ -20,8 +22,43 @@ export async function handleSystemRoutes(context: RouteContext): Promise<boolean
     readModelPath,
     request,
     response,
+    serviceMode,
     url,
   } = context;
+  if (url.pathname === "/livez") {
+    json(response, 200, {
+      ok: true,
+      service: {
+        mode: serviceMode,
+        provenance: serviceProvenance(env),
+        writesEnabled: serviceWritesEnabled(serviceMode),
+      },
+    });
+    return true;
+  }
+  if (url.pathname === "/readyz") {
+    if (readModelOptionalApi) {
+      json(response, 200, {
+        ok: true,
+        readModel: "disabled",
+        serviceMode,
+      });
+      return true;
+    }
+    try {
+      const result = await pool.query<{ schema_migrations: string | null }>(
+        "SELECT to_regclass('public.schema_migrations')::text AS schema_migrations",
+      );
+      if (!result.rows[0]?.schema_migrations) {
+        json(response, 503, { error: "migrations_not_applied", ok: false });
+        return true;
+      }
+      json(response, 200, { ok: true, readModel: "available", serviceMode });
+    } catch {
+      json(response, 503, { error: "read_model_unavailable", ok: false });
+    }
+    return true;
+  }
   if (url.pathname === "/health") {
     if (readModelOptionalApi) {
       const apiHealth = await buildReadModelOptionalApiHealth(dependencies, deploymentPath, env);
@@ -36,6 +73,11 @@ export async function handleSystemRoutes(context: RouteContext): Promise<boolean
           configured: false,
           status: "unavailable",
         },
+        service: {
+          mode: serviceMode,
+          provenance: serviceProvenance(env),
+          writesEnabled: serviceWritesEnabled(serviceMode),
+        },
       });
       return true;
     }
@@ -47,11 +89,22 @@ export async function handleSystemRoutes(context: RouteContext): Promise<boolean
       ...metadata,
       counts,
       sync: await buildSyncStatus(dependencies, pool, metadata),
+      service: {
+        mode: serviceMode,
+        provenance: serviceProvenance(env),
+        writesEnabled: serviceWritesEnabled(serviceMode),
+      },
     });
     return true;
   }
   if (url.pathname === "/write-config") {
-    json(response, 200, await buildWriteProtocolConfigPayload(deploymentPath, env));
+    json(response, 200, {
+      ...(await buildWriteProtocolConfigPayload(deploymentPath, env)),
+      gateway: {
+        mode: serviceMode,
+        writesEnabled: serviceWritesEnabled(serviceMode),
+      },
+    });
     return true;
   }
 

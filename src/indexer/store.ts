@@ -1,5 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { Pool, type PoolClient, type PoolConfig } from "pg";
 import { readPositiveIntegerEnv } from "../shared/cli.js";
 import type { DeploymentFile } from "../shared/deployment.js";
@@ -19,7 +20,9 @@ import type {
 import { readEnvValue } from "../shared/secrets.js";
 
 export const DEFAULT_DATABASE_URL = "postgresql://postgres@127.0.0.1:5432/scientific_protocol";
-export const DEFAULT_MIGRATIONS_PATH = path.resolve(process.cwd(), "ops", "migrations");
+export const DEFAULT_MIGRATIONS_PATH = fileURLToPath(
+  new URL("../../ops/migrations", import.meta.url),
+);
 
 type MetadataRow = {
   key: string;

@@ -43,6 +43,22 @@ PyPI API token.
 The workflow refuses to publish if the tag does not match `package.json` or if the package version
 already exists on npm.
 
+The same `vX.Y.Z` tag triggers `release-container.yml`. It publishes immutable version and commit
+tags to `ghcr.io/emgun/scientific-protocol-service`, generates an SBOM and registry provenance, and
+attests the resulting digest. It does not publish `latest`.
+
+For the prepared breaking release, the exact next release action after review and merge is:
+
+```bash
+git tag -s v0.3.0 -m "scientific-protocol 0.3.0"
+git push origin main v0.3.0
+```
+
+Do not create that tag until CI, the package dry run, a credential-free container smoke, and the
+0.3.0 deployment/migration review pass. After publication, deploy the GHCR image by digest and
+record the digest with the deployment manifest and database backup. See
+[reference-service.md](./reference-service.md) and [migrations/0.3.0.md](./migrations/0.3.0.md).
+
 ## PyPI Release Sequence
 
 1. Update the `python/pyproject.toml` version.

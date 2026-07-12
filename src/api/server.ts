@@ -9,7 +9,7 @@ import {
   migrateReadModelDb,
   ReadModelSyncInProgressError,
 } from "../indexer/store.js";
-import { isMainModule, readPositiveIntegerEnv } from "../shared/cli.js";
+import { isMainModule, readBooleanEnv, readPositiveIntegerEnv } from "../shared/cli.js";
 import { getRpcUrl } from "../shared/contracts.js";
 import { getDeploymentPath } from "../shared/deployment.js";
 import {
@@ -47,6 +47,7 @@ import { handleRewardRoutes } from "./routes/rewards.js";
 import { handleSourceReadRoutes, handleSourceWriteRoutes } from "./routes/sources.js";
 import { handleOperatorRequestRoutes, handleSystemRoutes } from "./routes/system.js";
 import { handleWorkLifecycleRoutes, handleWorkReadRoutes } from "./routes/work.js";
+import { resolveServiceMode, serviceWritesEnabled, type ServiceMode } from "../service/mode.js";
 
 export type { ApiDependencies } from "./dependencies.js";
 export type {
@@ -67,6 +68,7 @@ export type ApiServerOptions = {
   rateLimitConfig?: PartialApiRateLimitConfig;
   readModelPath?: string;
   runMigrations?: boolean;
+  serviceMode?: ServiceMode;
   dependencies?: Partial<ApiDependencies>;
 };
 
@@ -115,6 +117,7 @@ export async function createApiServer(options: ApiServerOptions = {}): Promise<A
     ...options.dependencies,
   };
   const rateLimitConfig = resolveRateLimitConfig(options.rateLimitConfig, env);
+  const serviceMode = options.serviceMode ?? resolveServiceMode(env);
   const rateLimitBuckets = new Map<string, RateLimitRecord>();
   const sourceDuplicateCooldownBuckets = new Map<string, RateLimitRecord>();
 
@@ -132,6 +135,14 @@ export async function createApiServer(options: ApiServerOptions = {}): Promise<A
       applyPublicCorsHeaders(request, response, url, env);
       const isReadRequest = request.method === "GET" || request.method === "HEAD";
       const includeReadBody = request.method !== "HEAD";
+      const readOnlyMutation =
+        !serviceWritesEnabled(serviceMode) &&
+        ((!isReadRequest && request.method !== "OPTIONS") || url.pathname === "/admin/sync");
+      if (readOnlyMutation) {
+        response.setHeader("Allow", "GET, HEAD, OPTIONS");
+        json(response, 405, { error: "service_read_only", serviceMode });
+        return;
+      }
       const rateLimitScope = demoRateLimitScope(url, request.method, env);
       if (
         rateLimitScope &&
@@ -168,6 +179,7 @@ export async function createApiServer(options: ApiServerOptions = {}): Promise<A
         readModelPath,
         request,
         response,
+        serviceMode,
         sourceDuplicateCooldownBuckets,
         url,
       };
@@ -387,7 +399,10 @@ export async function createApiServer(options: ApiServerOptions = {}): Promise<A
 
 export async function startApiServerFromEnv(env: NodeJS.ProcessEnv = process.env): Promise<void> {
   const port = readPositiveIntegerEnv(env, "PORT", 3000);
-  const instance = await createApiServer({ env });
+  const instance = await createApiServer({
+    env,
+    runMigrations: readBooleanEnv(env, "SP_RUN_MIGRATIONS", false),
+  });
   const { server } = instance;
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);

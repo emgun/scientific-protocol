@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Scientific Protocol Read API
-  version: 0.2.1
+  version: 0.3.0
   description: |
     Public read surface of a Scientific Protocol gateway, plus the shape of the
     signed public-write envelope. This is a v0 contract document: it names the
@@ -27,6 +27,19 @@ tags:
   - name: writes
 
 paths:
+  /livez:
+    get:
+      tags: [system]
+      summary: Process liveness and immutable release provenance
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+  /readyz:
+    get:
+      tags: [system]
+      summary: Read-model migration and database readiness
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+        "503": { description: The configured read model is unavailable or unmigrated. }
   /health:
     get:
       tags: [system]
@@ -115,6 +128,26 @@ paths:
         - $ref: "#/components/parameters/offset"
       responses:
         "200": { $ref: "#/components/responses/JsonObject" }
+    post:
+      tags: [writes]
+      summary: Submit a source (signed public write)
+      description: |
+        All public writes share one shape: a typed envelope plus an EIP-191
+        signature from the submitting wallet. The envelope binds action type,
+        payload digest, timestamp, and replay-protection nonce. Signing helpers
+        are exported by the `scientific-protocol` npm package
+        (`createSignedPublicWriteRequest`) and the Python client. A gateway in
+        `read-only` service mode rejects this operation with HTTP 405.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignedWriteRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+        "401": { description: Signature or envelope rejected. }
+        "405": { description: Gateway is running in read-only mode. }
+        "429": { description: Rate limited. }
   /feeds/sources:
     get:
       tags: [sources]
@@ -198,26 +231,6 @@ paths:
       summary: Governance event history
       responses:
         "200": { $ref: "#/components/responses/JsonObject" }
-
-  /sources#post:
-    post:
-      tags: [writes]
-      summary: Submit a source (signed public write)
-      description: |
-        All public writes share one shape: a typed envelope plus an EIP-191
-        signature from the submitting wallet. The envelope binds action type,
-        payload digest, timestamp, and replay-protection nonce. Signing helpers
-        are exported by the `scientific-protocol` npm package
-        (`createSignedPublicWriteRequest`) and the Python client.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/SignedWriteRequest" }
-      responses:
-        "200": { $ref: "#/components/responses/JsonObject" }
-        "401": { description: Signature or envelope rejected. }
-        "429": { description: Rate limited. }
 
 components:
   parameters:

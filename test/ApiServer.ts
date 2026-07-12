@@ -2480,7 +2480,10 @@ async function startServer(
       : createDependencyOverrides(dependencies),
     databaseUrl: "postgresql://test@127.0.0.1:5432/scientific_protocol_test",
     deploymentPath: options.deploymentPath ?? TEST_DEPLOYMENT_PATH,
-    env: options.env,
+    env:
+      options.env === undefined
+        ? { ...process.env, SP_SERVICE_MODE: "write-enabled" }
+        : { SP_SERVICE_MODE: "write-enabled", ...options.env },
     rateLimitConfig: options.rateLimitConfig,
   });
 
@@ -2530,6 +2533,102 @@ function localOperatorWallet(accountIndex: number): Wallet {
 }
 
 describe("ApiServer", () => {
+  it("exposes liveness provenance without database, RPC, or signer access", async () => {
+    const server = await startServer(
+      {},
+      {
+        env: {
+          SP_SERVICE_BUILD_DATE: "2026-07-12T00:00:00Z",
+          SP_SERVICE_MODE: "read-only",
+          SP_SERVICE_REVISION: "abc123",
+          SP_SERVICE_VERSION: "0.3.0",
+        },
+      },
+    );
+    try {
+      const response = await fetch(`${server.baseUrl}/livez`);
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), {
+        ok: true,
+        service: {
+          mode: "read-only",
+          provenance: {
+            buildDate: "2026-07-12T00:00:00Z",
+            imageRevision: "abc123",
+            version: "0.3.0",
+          },
+          writesEnabled: false,
+        },
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("reports migration-aware readiness without disclosing database errors", async () => {
+    const readyPool = {
+      query: async () => ({ rows: [{ schema_migrations: "schema_migrations" }] }),
+    } as unknown as Pool;
+    const ready = await startServer({}, { pool: readyPool });
+    try {
+      const response = await fetch(`${ready.baseUrl}/readyz`);
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), {
+        ok: true,
+        readModel: "available",
+        serviceMode: "write-enabled",
+      });
+    } finally {
+      await ready.close();
+    }
+
+    const unavailablePool = {
+      query: async () => {
+        throw new Error("private database hostname");
+      },
+    } as unknown as Pool;
+    const unavailable = await startServer({}, { pool: unavailablePool });
+    try {
+      const response = await fetch(`${unavailable.baseUrl}/readyz`);
+      assert.equal(response.status, 503);
+      assert.deepEqual(await response.json(), {
+        error: "read_model_unavailable",
+        ok: false,
+      });
+    } finally {
+      await unavailable.close();
+    }
+  });
+
+  it("fails safe to a read-only gateway mode", async () => {
+    const server = await startServer({}, { env: { SP_SERVICE_MODE: "read-only" } });
+    try {
+      const response = await fetch(`${server.baseUrl}/sources`, { method: "POST" });
+      assert.equal(response.status, 405);
+      assert.equal(response.headers.get("allow"), "GET, HEAD, OPTIONS");
+      assert.deepEqual(await response.json(), {
+        error: "service_read_only",
+        serviceMode: "read-only",
+      });
+
+      const syncResponse = await fetch(`${server.baseUrl}/admin/sync`);
+      assert.equal(syncResponse.status, 405);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("rejects unknown service modes during server creation", async () => {
+    await assert.rejects(
+      createApiServer({
+        env: { SP_SERVICE_MODE: "unsafe" },
+        pool: {} as Pool,
+        runMigrations: false,
+      }),
+      /SP_SERVICE_MODE must be one of: read-only, write-enabled/,
+    );
+  });
+
   it("rejects invalid rate-limit boolean env values during server creation", async () => {
     await assert.rejects(
       startServer({}, { env: { SP_TRUST_PROXY: "sometimes" } }),

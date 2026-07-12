@@ -1,0 +1,28 @@
+export const PUBLIC_API_OPERATIONS = [
+  ["get", "/livez"],
+  ["get", "/readyz"],
+  ["get", "/health"],
+  ["get", "/beta/snapshot"],
+  ["get", "/write-config"],
+  ["get", "/claims"],
+  ["get", "/claims/{claimId}"],
+  ["get", "/feeds/claims"],
+  ["get", "/events/claims"],
+  ["get", "/sources"],
+  ["post", "/sources"],
+  ["get", "/feeds/sources"],
+  ["get", "/events/sources"],
+  ["get", "/replications"],
+  ["get", "/checkpoints"],
+  ["get", "/agents"],
+  ["get", "/artifacts"],
+  ["get", "/forecasts"],
+  ["get", "/challenges"],
+  ["get", "/appeals"],
+  ["get", "/work-items"],
+  ["get", "/governance/proposals"],
+  ["get", "/governance/treasury"],
+  ["get", "/governance/events"],
+] as const;
+
+export type PublicApiOperation = (typeof PUBLIC_API_OPERATIONS)[number];

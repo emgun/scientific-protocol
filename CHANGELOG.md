@@ -14,6 +14,41 @@ All notable changes to the `scientific-protocol` package are documented here. Th
 - JSON Schemas in `schemas/` are versioned with the package. Additive, optional fields are patch
   changes; anything else is minor.
 
+## [0.3.0] — Unreleased
+
+### ABI changes
+
+- `BondEscrow` now takes the replication registry as its third constructor argument.
+- `reserveBountyPayout` derives the recipient from the named replication and removes the caller-
+  supplied recipient argument. Reservations require a matching claim/replication pair, release
+  requires a resolved replication, and `cancelReservedPayout` provides terminal cancellation.
+- `AgentRegistry.AgentRecord` adds `spentBudget`. Spend limits now cap lifetime consumed value plus
+  outstanding reservations and cannot be reduced below that committed amount.
+- `ReplicationRegistry` rejects modules that return `false` and exposes replication submitter and
+  resolution-state reads through `IReplicationRegistry`.
+
+These contracts are non-upgradeable. Existing deployments remain readable history but cannot be
+relabelled as 0.3.0. Operators must deploy the complete 0.3.0 contract set and update deployment
+metadata. See [docs/migrations/0.3.0.md](docs/migrations/0.3.0.md).
+
+### Added
+
+- A production multi-stage reference-service container with non-root execution, OCI provenance,
+  SBOM/attestation release automation, immutable version and commit tags, and a read-only default.
+- `scientific-protocol-service` CLI entrypoints for the gateway, migrations, one-shot sync,
+  recurring sync, review, replication, and artifact-maintenance workers.
+- Explicit `read-only` and `write-enabled` gateway modes, `/livez`, `/readyz`, release provenance,
+  and migration-aware readiness.
+- Executable JSON Schema compilation and OpenAPI/public-route conformance tests.
+
+### Changed
+
+- The published npm package now includes the compiled reference-service runtime and read-model
+  migrations. Service runtime libraries are production dependencies.
+- OpenAPI is versioned at 0.3.0 and correctly models GET and POST as operations on `/sources`.
+- API processes no longer run migrations implicitly; operators run the explicit migration command
+  as a release step.
+
 ## [0.2.2] — 2026-07-10
 
 ### Added

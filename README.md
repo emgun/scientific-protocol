@@ -65,10 +65,9 @@ contract bindings, and reference modules for nodes and downstream applications. 
 consume those interfaces through package releases, contract metadata, deployment metadata, direct
 chain access, or the reference API.
 
-The public command surface is intentionally small: build and test the contracts, regenerate
-bindings, run a local EVM node, and deploy the protocol contracts to a configured RPC endpoint.
-Application hosting, product release automation, and operated-service scheduling belong in
-downstream application or operator repositories.
+The public package also ships a versioned reference-service runtime for gateways, indexers,
+migrations, and workers. Deployment credentials, scheduling policy, product hosting, and incident
+response remain downstream operator responsibilities.
 
 ## Protocol Surface
 
@@ -122,6 +121,20 @@ npm run gas:snapshot
 
 Release process: see [docs/release.md](docs/release.md).
 
+Build and smoke the production reference-service container without credentials:
+
+```bash
+docker build \
+  --build-arg VERSION=0.3.0 \
+  --build-arg REVISION="$(git rev-parse HEAD)" \
+  --build-arg CREATED="$(git show -s --format=%cI)" \
+  -t scientific-protocol-service:0.3.0 .
+docker run --rm scientific-protocol-service:0.3.0 help
+```
+
+See [docs/reference-service.md](docs/reference-service.md) for service modes, migration commands,
+health/readiness, immutable image deployment, and rollback.
+
 ## Local Protocol Stack
 
 Start a local Hardhat node:
@@ -164,6 +177,11 @@ Useful routes include:
 
 Set `SP_API_MODE=read-model-optional` for deployments that expose health and write configuration
 without a configured read-model database.
+
+The packaged service defaults to `SP_SERVICE_MODE=read-only`. Use
+`SP_SERVICE_MODE=write-enabled` only for separately credentialed gateways or mutation workers.
+Apply database migrations explicitly with `scientific-protocol-service migrate`; API processes do
+not migrate implicitly.
 
 ## Repository Map
 
