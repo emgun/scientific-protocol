@@ -88,7 +88,7 @@ contract ProtocolFuzzTest is ProtocolDeployer {
 
         uint256 firstReservation = bound(uint256(firstRaw), 1, funded);
         vm.prank(admin);
-        bondEscrow.reserveBountyPayout(claimId, replicationIdOne, replicator, firstReservation);
+        bondEscrow.reserveBountyPayout(claimId, replicationIdOne, firstReservation);
 
         uint256 availableAfterFirst = funded - firstReservation;
         uint256 secondReservation = bound(uint256(secondRaw), 1, funded);
@@ -96,20 +96,10 @@ contract ProtocolFuzzTest is ProtocolDeployer {
         if (secondReservation > availableAfterFirst) {
             vm.prank(admin);
             vm.expectRevert();
-            bondEscrow.reserveBountyPayout(
-                claimId,
-                replicationIdTwo,
-                replicator,
-                secondReservation
-            );
+            bondEscrow.reserveBountyPayout(claimId, replicationIdTwo, secondReservation);
         } else {
             vm.prank(admin);
-            bondEscrow.reserveBountyPayout(
-                claimId,
-                replicationIdTwo,
-                replicator,
-                secondReservation
-            );
+            bondEscrow.reserveBountyPayout(claimId, replicationIdTwo, secondReservation);
             assertLe(
                 bondEscrow.reservedBountyBalances(claimId),
                 bondEscrow.bountyBalances(claimId)

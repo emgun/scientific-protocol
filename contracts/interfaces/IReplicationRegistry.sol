@@ -5,4 +5,8 @@ interface IReplicationRegistry {
     function replicationExists(uint256 replicationId) external view returns (bool);
 
     function getReplicationClaimId(uint256 replicationId) external view returns (uint256);
+
+    function getReplicationReplicator(uint256 replicationId) external view returns (address);
+
+    function isReplicationResolved(uint256 replicationId) external view returns (bool);
 }

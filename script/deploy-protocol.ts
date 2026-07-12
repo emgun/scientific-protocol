@@ -319,14 +319,6 @@ export async function deployLocalFromEnv(env: NodeJS.ProcessEnv = process.env): 
     )) as UntypedContract;
     await artifactRegistry.waitForDeployment();
 
-    const BondEscrow = getContractFactory("BondEscrow", deployer);
-    const bondEscrow = (await BondEscrow.deploy(
-      await accessController.getAddress(),
-      await claimRegistry.getAddress(),
-      deployTxOverrides,
-    )) as UntypedContract;
-    await bondEscrow.waitForDeployment();
-
     const AgentRegistry = getContractFactory("AgentRegistry", deployer);
     const agentRegistry = (await AgentRegistry.deploy(
       await accessController.getAddress(),
@@ -351,6 +343,15 @@ export async function deployLocalFromEnv(env: NodeJS.ProcessEnv = process.env): 
       deployTxOverrides,
     )) as UntypedContract;
     await replicationRegistry.waitForDeployment();
+
+    const BondEscrow = getContractFactory("BondEscrow", deployer);
+    const bondEscrow = (await BondEscrow.deploy(
+      await accessController.getAddress(),
+      await claimRegistry.getAddress(),
+      await replicationRegistry.getAddress(),
+      deployTxOverrides,
+    )) as UntypedContract;
+    await bondEscrow.waitForDeployment();
 
     const ReputationCheckpointRegistry = getContractFactory(
       "ReputationCheckpointRegistry",

@@ -73,12 +73,16 @@ abstract contract ProtocolDeployer is Test {
             address(protocolParameters)
         );
         artifactRegistry = new ArtifactRegistry(address(claimRegistry));
-        bondEscrow = new BondEscrow(address(accessController), address(claimRegistry));
         agentRegistry = new AgentRegistry(address(accessController));
         replicationRegistry = new ReplicationRegistry(
             address(accessController),
             address(claimRegistry),
             address(agentRegistry)
+        );
+        bondEscrow = new BondEscrow(
+            address(accessController),
+            address(claimRegistry),
+            address(replicationRegistry)
         );
         checkpointRegistry = new ReputationCheckpointRegistry(
             address(accessController),

@@ -159,13 +159,6 @@ async function deployProtocol() {
   const artifactRegistry = await ArtifactRegistry.deploy(await claimRegistry.getAddress());
   await artifactRegistry.waitForDeployment();
 
-  const BondEscrow = await ethers.getContractFactory("contracts/BondEscrow.sol:BondEscrow");
-  const bondEscrow = await BondEscrow.deploy(
-    await accessController.getAddress(),
-    await claimRegistry.getAddress(),
-  );
-  await bondEscrow.waitForDeployment();
-
   const AgentRegistry = await ethers.getContractFactory(
     "contracts/AgentRegistry.sol:AgentRegistry",
   );
@@ -191,6 +184,14 @@ async function deployProtocol() {
     await agentRegistry.getAddress(),
   );
   await replicationRegistry.waitForDeployment();
+
+  const BondEscrow = await ethers.getContractFactory("contracts/BondEscrow.sol:BondEscrow");
+  const bondEscrow = await BondEscrow.deploy(
+    await accessController.getAddress(),
+    await claimRegistry.getAddress(),
+    await replicationRegistry.getAddress(),
+  );
+  await bondEscrow.waitForDeployment();
 
   const CheckpointRegistry = await ethers.getContractFactory(
     "contracts/ReputationCheckpointRegistry.sol:ReputationCheckpointRegistry",
@@ -256,6 +257,28 @@ async function deployProtocol() {
     epistemicMarket,
     appealsRegistry,
   };
+}
+
+async function resolveReplication(
+  protocol: Awaited<ReturnType<typeof deployProtocol>>,
+  replicationId: number,
+) {
+  await (
+    await protocol.replicationRegistry
+      .connect(protocol.admin)
+      .resolveReplicationOutcome(replicationId, {
+        status: RESOLUTION_STATUS.Supported,
+        confidenceBps: 9_000,
+        resolutionHash: ethers.keccak256(
+          ethers.toUtf8Bytes(`resolution-${replicationId.toString()}`),
+        ),
+        resolverType: RESOLVER_TYPE.ComputationOracle,
+        evidenceHash: ethers.keccak256(
+          ethers.toUtf8Bytes(`resolution-evidence-${replicationId.toString()}`),
+        ),
+        evidenceURI: `ipfs://resolution/${replicationId.toString()}`,
+      })
+  ).wait();
 }
 
 describe("ClaimRegistry delegated submission", () => {
@@ -409,9 +432,7 @@ describe("ScientificProtocol", () => {
       await protocol.claimRegistry.connect(protocol.admin).setClaimStatus(1, CLAIM_STATUS.Qualified)
     ).wait();
     await (
-      await protocol.bondEscrow
-        .connect(protocol.admin)
-        .reserveBountyPayout(1, 1, protocol.replicator.address, bountyAmount)
+      await protocol.bondEscrow.connect(protocol.admin).reserveBountyPayout(1, 1, bountyAmount)
     ).wait();
     await (await protocol.bondEscrow.connect(protocol.admin).releaseReservedPayout(1, 1)).wait();
 
@@ -569,6 +590,7 @@ describe("ScientificProtocol", () => {
     const agentRecord = await protocol.agentRegistry.getAgent(1);
     assert.equal(agentRecord.budgetBalance, ethers.parseEther("1.75"));
     assert.equal(agentRecord.reservedBudget, ethers.parseEther("0.25"));
+    assert.equal(agentRecord.spentBudget, ethers.parseEther("0.25"));
 
     await (
       await protocol.replicationRegistry
@@ -584,6 +606,99 @@ describe("ScientificProtocol", () => {
 
     const replication = await protocol.replicationRegistry.getReplication(1);
     assert.equal(replication.agentId, 1n);
+  });
+
+  it("enforces an agent spend limit across repeated reserve-and-consume cycles", async () => {
+    const protocol = await deployProtocol();
+    const spendLimit = ethers.parseEther("1");
+
+    await (
+      await protocol.agentRegistry
+        .connect(protocol.agentOperator)
+        .registerAgent(
+          ethers.keccak256(ethers.toUtf8Bytes("lifetime-cap-agent")),
+          "ipfs://agents/lifetime-cap",
+          spendLimit,
+          { value: ethers.parseEther("2") },
+        )
+    ).wait();
+
+    for (let index = 0; index < 2; index += 1) {
+      await (
+        await protocol.agentRegistry
+          .connect(protocol.admin)
+          .reserveBudget(1, ethers.parseEther("0.5"))
+      ).wait();
+      await (
+        await protocol.agentRegistry
+          .connect(protocol.admin)
+          .consumeBudget(1, ethers.parseEther("0.5"), protocol.other.address)
+      ).wait();
+    }
+
+    const agent = await protocol.agentRegistry.getAgent(1);
+    assert.equal(agent.spentBudget, spendLimit);
+    assert.equal(agent.reservedBudget, 0n);
+
+    await assert.rejects(
+      protocol.agentRegistry.connect(protocol.admin).reserveBudget(1, 1n),
+      /AgentRegistrySpendLimitExceeded/,
+    );
+    await assert.rejects(
+      protocol.agentRegistry.connect(protocol.agentOperator).setSpendLimit(1, spendLimit - 1n),
+      /AgentRegistrySpendLimitBelowCommitted/,
+    );
+  });
+
+  it("rejects a resolution module that returns false without mutating the replication", async () => {
+    const protocol = await deployProtocol();
+    const RejectingModule = await ethers.getContractFactory(
+      "contracts/mocks/RejectingResolutionModule.sol:RejectingResolutionModule",
+    );
+    const rejectingModule = await RejectingModule.deploy();
+    await rejectingModule.waitForDeployment();
+    await (
+      await protocol.moduleRegistry
+        .connect(protocol.admin)
+        .registerModule(await rejectingModule.getAddress(), "ipfs://modules/rejecting")
+    ).wait();
+
+    await (
+      await protocol.claimRegistry
+        .connect(protocol.author)
+        .createClaim(
+          makeClaimSummary(protocol.author.address, 1n),
+          ethers.parseEther("0.25"),
+          await rejectingModule.getAddress(),
+        )
+    ).wait();
+    await (
+      await protocol.replicationRegistry
+        .connect(protocol.replicator)
+        .submitReplication(
+          1,
+          ethers.keccak256(ethers.toUtf8Bytes("reject-env")),
+          ethers.keccak256(ethers.toUtf8Bytes("reject-result")),
+          ethers.keccak256(ethers.toUtf8Bytes("reject-evidence")),
+          0,
+        )
+    ).wait();
+
+    await assert.rejects(
+      protocol.replicationRegistry.connect(protocol.admin).resolveReplicationOutcome(1, {
+        status: RESOLUTION_STATUS.Supported,
+        confidenceBps: 9_000,
+        resolutionHash: ethers.keccak256(ethers.toUtf8Bytes("rejected-resolution")),
+        resolverType: RESOLVER_TYPE.ComputationOracle,
+        evidenceHash: ethers.keccak256(ethers.toUtf8Bytes("rejected-resolution-evidence")),
+        evidenceURI: "ipfs://resolution/rejected",
+      }),
+      /ReplicationRegistryModuleRejected/,
+    );
+
+    const replication = await protocol.replicationRegistry.getReplication(1);
+    assert.equal(replication.resolvedAt, 0n);
+    assert.equal(replication.resolver, ethers.ZeroAddress);
   });
 
   it("does not authorize inactive agents for controller or budget execution", async () => {
@@ -1621,7 +1736,7 @@ describe("ScientificProtocol", () => {
       await (
         await protocol.bondEscrow
           .connect(protocol.author)
-          .reserveBountyPayout(1, 1, protocol.replicator.address, ethers.parseEther("0.1"))
+          .reserveBountyPayout(1, 1, ethers.parseEther("0.1"))
       ).wait();
     } catch {
       unauthorizedEscrow = true;
@@ -1688,15 +1803,17 @@ describe("ScientificProtocol", () => {
     await (
       await protocol.bondEscrow
         .connect(protocol.admin)
-        .reserveBountyPayout(1, 1, protocol.replicator.address, ethers.parseEther("1"))
+        .reserveBountyPayout(1, 1, ethers.parseEther("1"))
     ).wait();
+
+    await resolveReplication(protocol, 1);
 
     let oversubscribedReservation = false;
     try {
       await (
         await protocol.bondEscrow
           .connect(protocol.admin)
-          .reserveBountyPayout(1, 2, protocol.replicator.address, ethers.parseEther("1.5"))
+          .reserveBountyPayout(1, 2, ethers.parseEther("1.5"))
       ).wait();
     } catch {
       oversubscribedReservation = true;
@@ -1740,6 +1857,129 @@ describe("ScientificProtocol", () => {
     assert.equal(await protocol.bondEscrow.reservedBountyBalances(1), 0n);
   });
 
+  it("binds bounty payouts to resolved replications and supports terminal cancellation", async () => {
+    const protocol = await deployProtocol();
+    const bountyAmount = ethers.parseEther("2");
+
+    for (const domainId of [1n, 2n]) {
+      await (
+        await protocol.claimRegistry
+          .connect(protocol.author)
+          .createClaim(
+            makeClaimSummary(protocol.author.address, domainId),
+            ethers.parseEther("0.25"),
+            ethers.ZeroAddress,
+          )
+      ).wait();
+    }
+    await (
+      await protocol.bondEscrow
+        .connect(protocol.admin)
+        .fundReplicationBounty(1, { value: bountyAmount })
+    ).wait();
+
+    await (
+      await protocol.replicationRegistry
+        .connect(protocol.replicator)
+        .submitReplication(
+          2,
+          ethers.keccak256(ethers.toUtf8Bytes("other-claim-env")),
+          ethers.keccak256(ethers.toUtf8Bytes("other-claim-result")),
+          ethers.keccak256(ethers.toUtf8Bytes("other-claim-evidence")),
+          0,
+        )
+    ).wait();
+    await assert.rejects(
+      protocol.bondEscrow
+        .connect(protocol.admin)
+        .reserveBountyPayout(1, 1, ethers.parseEther("0.5")),
+      /BondEscrowReplicationClaimMismatch/,
+    );
+
+    await (
+      await protocol.replicationRegistry
+        .connect(protocol.replicator)
+        .submitReplication(
+          1,
+          ethers.keccak256(ethers.toUtf8Bytes("claim-env")),
+          ethers.keccak256(ethers.toUtf8Bytes("claim-result")),
+          ethers.keccak256(ethers.toUtf8Bytes("claim-evidence")),
+          0,
+        )
+    ).wait();
+    await (
+      await protocol.bondEscrow
+        .connect(protocol.admin)
+        .reserveBountyPayout(1, 2, ethers.parseEther("0.75"))
+    ).wait();
+
+    const reservation = await protocol.bondEscrow.getReservation(1, 2);
+    assert.equal(reservation.recipient, protocol.replicator.address);
+    await assert.rejects(
+      protocol.bondEscrow.connect(protocol.admin).releaseReservedPayout(1, 2),
+      /BondEscrowUnresolvedReplication/,
+    );
+    await assert.rejects(protocol.bondEscrow.connect(protocol.author).cancelReservedPayout(1, 2));
+
+    const cancellation = await (
+      await protocol.bondEscrow.connect(protocol.admin).cancelReservedPayout(1, 2)
+    ).wait();
+    const cancelledLog = cancellation?.logs.find((log) => {
+      try {
+        return protocol.bondEscrow.interface.parseLog(log)?.name === "BountyPayoutCancelled";
+      } catch {
+        return false;
+      }
+    });
+    assert.ok(cancelledLog);
+    const cancelledReservation = await protocol.bondEscrow.getReservation(1, 2);
+    assert.equal(cancelledReservation.cancelled, true);
+    assert.equal(await protocol.bondEscrow.reservedBountyBalances(1), 0n);
+    assert.equal(await protocol.bondEscrow.bountyBalances(1), bountyAmount);
+    await assert.rejects(
+      protocol.bondEscrow.connect(protocol.admin).cancelReservedPayout(1, 2),
+      /BondEscrowAlreadyCancelled/,
+    );
+    await assert.rejects(
+      protocol.bondEscrow.connect(protocol.admin).releaseReservedPayout(1, 2),
+      /BondEscrowAlreadyCancelled/,
+    );
+
+    await (
+      await protocol.replicationRegistry
+        .connect(protocol.replicator)
+        .submitReplication(
+          1,
+          ethers.keccak256(ethers.toUtf8Bytes("released-env")),
+          ethers.keccak256(ethers.toUtf8Bytes("released-result")),
+          ethers.keccak256(ethers.toUtf8Bytes("released-evidence")),
+          0,
+        )
+    ).wait();
+    await resolveReplication(protocol, 3);
+    await (
+      await protocol.bondEscrow
+        .connect(protocol.admin)
+        .reserveBountyPayout(1, 3, ethers.parseEther("0.5"))
+    ).wait();
+    const before = await ethers.provider.getBalance(protocol.replicator.address);
+    const release = await (
+      await protocol.bondEscrow.connect(protocol.admin).releaseReservedPayout(1, 3)
+    ).wait();
+    const releasedLog = release?.logs.find((log) => {
+      try {
+        return protocol.bondEscrow.interface.parseLog(log)?.name === "BountyPayoutReleased";
+      } catch {
+        return false;
+      }
+    });
+    assert.ok(releasedLog);
+    assert.equal(
+      await ethers.provider.getBalance(protocol.replicator.address),
+      before + ethers.parseEther("0.5"),
+    );
+  });
+
   it("rejects zero-address escrow and agent budget recipients", async () => {
     const protocol = await deployProtocol();
     const bondAmount = ethers.parseEther("1");
@@ -1762,7 +2002,7 @@ describe("ScientificProtocol", () => {
     await assert.rejects(
       protocol.bondEscrow
         .connect(protocol.admin)
-        .reserveBountyPayout(1, 1, ethers.ZeroAddress, ethers.parseEther("0.5")),
+        .reserveBountyPayout(1, 99, ethers.parseEther("0.5")),
     );
     await assert.rejects(
       protocol.bondEscrow
@@ -1863,7 +2103,7 @@ describe("ScientificProtocol", () => {
       await (
         await protocol.bondEscrow
           .connect(protocol.admin)
-          .reserveBountyPayout(1, replicationId, protocol.replicator.address, amount)
+          .reserveBountyPayout(1, replicationId, amount)
       ).wait();
 
       const reservedAfterReservation = BigInt(await protocol.bondEscrow.reservedBountyBalances(1));
@@ -1871,6 +2111,7 @@ describe("ScientificProtocol", () => {
       assert.equal(reservedAfterReservation <= bountyAfterReservation, true);
 
       if (rng() > 0.35) {
+        await resolveReplication(protocol, replicationId);
         await (
           await protocol.bondEscrow.connect(protocol.admin).releaseReservedPayout(1, replicationId)
         ).wait();

@@ -21,6 +21,7 @@ contract EscrowHandler is Test {
 
     mapping(uint256 => bool) internal hasReservation;
     mapping(uint256 => bool) internal releasedReservation;
+    mapping(uint256 => bool) internal cancelledReservation;
     uint256 internal releasedTotal;
 
     constructor(
@@ -47,12 +48,24 @@ contract EscrowHandler is Test {
 
     function submitReplication(uint256 seed) external {
         vm.prank(replicator);
-        replicationRegistry.submitReplication(
+        uint256 replicationId = replicationRegistry.submitReplication(
             claimId,
             keccak256(abi.encodePacked("env", seed)),
             keccak256(abi.encodePacked("result", seed)),
             keccak256(abi.encodePacked("evidence", seed)),
             0
+        );
+        vm.prank(admin);
+        replicationRegistry.resolveReplicationOutcome(
+            replicationId,
+            ProtocolTypes.ResolutionResult({
+                status: ProtocolTypes.ResolutionStatus.Supported,
+                confidenceBps: 9_000,
+                resolutionHash: keccak256(abi.encodePacked("resolution", seed)),
+                resolverType: ProtocolTypes.ResolverType.ComputationOracle,
+                evidenceHash: keccak256(abi.encodePacked("resolution-evidence", seed)),
+                evidenceURI: "ipfs://resolution"
+            })
         );
     }
 
@@ -80,7 +93,7 @@ contract EscrowHandler is Test {
         uint256 amount = STEP * bound(amountSeed, 1, maxUnits);
 
         vm.prank(admin);
-        bondEscrow.reserveBountyPayout(claimId, replicationId, replicator, amount);
+        bondEscrow.reserveBountyPayout(claimId, replicationId, amount);
         hasReservation[replicationId] = true;
     }
 
@@ -90,7 +103,11 @@ contract EscrowHandler is Test {
             return;
         }
         uint256 replicationId = bound(replicationSeed, 1, nextReplicationId - 1);
-        if (!hasReservation[replicationId] || releasedReservation[replicationId]) {
+        if (
+            !hasReservation[replicationId] ||
+            releasedReservation[replicationId] ||
+            cancelledReservation[replicationId]
+        ) {
             return;
         }
 
@@ -102,6 +119,25 @@ contract EscrowHandler is Test {
         bondEscrow.releaseReservedPayout(claimId, replicationId);
         releasedReservation[replicationId] = true;
         releasedTotal += reservation.amount;
+    }
+
+    function cancelPayout(uint256 replicationSeed) external {
+        uint256 nextReplicationId = replicationRegistry.nextReplicationId();
+        if (nextReplicationId <= 1) {
+            return;
+        }
+        uint256 replicationId = bound(replicationSeed, 1, nextReplicationId - 1);
+        if (
+            !hasReservation[replicationId] ||
+            releasedReservation[replicationId] ||
+            cancelledReservation[replicationId]
+        ) {
+            return;
+        }
+
+        vm.prank(admin);
+        bondEscrow.cancelReservedPayout(claimId, replicationId);
+        cancelledReservation[replicationId] = true;
     }
 
     function slashAuthorBond(uint256 amountSeed) external {
@@ -170,18 +206,15 @@ interface BondEscrowLike {
         address recipient;
         uint256 amount;
         bool released;
+        bool cancelled;
     }
 
     function bountyBalances(uint256 claimId) external view returns (uint256);
     function reservedBountyBalances(uint256 claimId) external view returns (uint256);
     function authorBondBalances(uint256 claimId) external view returns (uint256);
-    function reserveBountyPayout(
-        uint256 claimId,
-        uint256 replicationId,
-        address recipient,
-        uint256 amount
-    ) external;
+    function reserveBountyPayout(uint256 claimId, uint256 replicationId, uint256 amount) external;
     function releaseReservedPayout(uint256 claimId, uint256 replicationId) external;
+    function cancelReservedPayout(uint256 claimId, uint256 replicationId) external;
     function slashAuthorBond(uint256 claimId, uint256 amount, address recipient) external;
     function refundAuthorBond(uint256 claimId, uint256 amount, address recipient) external;
     function getReservation(
@@ -204,6 +237,10 @@ interface ReplicationRegistryLike {
         bytes32 evidenceHash,
         uint256 agentId
     ) external returns (uint256 replicationId);
+    function resolveReplicationOutcome(
+        uint256 replicationId,
+        ProtocolTypes.ResolutionResult calldata result
+    ) external;
 }
 
 contract ProtocolInvariantTest is StdInvariant, ProtocolDeployer {
