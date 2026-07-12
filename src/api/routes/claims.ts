@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { authenticateSignedPublicWriteRequest } from "../auth.js";
 import { json } from "../http.js";
 import {
@@ -36,15 +37,24 @@ export async function handleClaimWriteRoutes(context: RouteContext): Promise<boo
     const writeConfig = await buildWriteProtocolConfigPayload(deploymentPath, env);
     const authenticated = await authenticateSignedPublicWriteRequest(dependencies, pool, request, {
       actionType: "claim_create",
+      allowRecordedReplay: true,
       chainId: writeConfig.chainId,
     });
     let accepted = false;
     let draftCheckpoint: string | null = null;
+    const leaseOwner = randomUUID();
+    const leaseAcquired = await dependencies.reservePublicWriteRequestExecution(pool, {
+      leaseMs: 5 * 60 * 1000,
+      leaseOwner,
+      requestId: authenticated.acceptedRequestId,
+    });
+    if (!leaseAcquired) throw new Error("public_write_request_in_progress");
     try {
       const payload = authenticated.envelope.payload;
       const result = await dependencies.createProductionClaim(
         {
           artifactType: typeof payload.artifactType === "number" ? payload.artifactType : undefined,
+          artifactSha256: String(payload.artifactSha256 ?? ""),
           artifactUri: String(payload.artifactUri ?? ""),
           authorBondEth:
             typeof payload.authorBondEth === "string" ? payload.authorBondEth : undefined,
@@ -62,6 +72,7 @@ export async function handleClaimWriteRoutes(context: RouteContext): Promise<boo
         pool,
         {
           env,
+          requestHash: authenticated.requestHash,
           onClaimDraftCreated: async ({ claimId, createClaimTxHash }) => {
             draftCheckpoint = `claim:${claimId}:draft:createTx:${createClaimTxHash}`;
             await dependencies.markPublicWriteRequestPending(
@@ -101,6 +112,11 @@ export async function handleClaimWriteRoutes(context: RouteContext): Promise<boo
         );
       }
       throw error;
+    } finally {
+      await dependencies.releasePublicWriteRequestExecution(pool, {
+        leaseOwner,
+        requestId: authenticated.acceptedRequestId,
+      });
     }
     return true;
   }

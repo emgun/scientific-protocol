@@ -1,0 +1,1162 @@
+[
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "accessController_",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "resolutionModuleRegistry_",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "protocolParameters_",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "constructor"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "role",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "address",
+        "name": "account",
+        "type": "address"
+      }
+    ],
+    "name": "AccessManagedMissingRole",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "AccessManagedZeroAddress",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "authorBondAmount",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "minimumBond",
+        "type": "uint256"
+      }
+    ],
+    "name": "ClaimRegistryAuthorBondBelowMinimum",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "claimId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "requiredAuthorBond",
+        "type": "uint256"
+      }
+    ],
+    "name": "ClaimRegistryAuthorBondUnsatisfied",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "expected",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "received",
+        "type": "address"
+      }
+    ],
+    "name": "ClaimRegistryInvalidAuthor",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "dependency",
+        "type": "address"
+      }
+    ],
+    "name": "ClaimRegistryInvalidProtocolDependency",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "enum ProtocolTypes.ResolutionStatus",
+        "name": "status",
+        "type": "uint8"
+      }
+    ],
+    "name": "ClaimRegistryInvalidResolutionStatus",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "enum ProtocolTypes.ClaimStatus",
+        "name": "from",
+        "type": "uint8"
+      },
+      {
+        "internalType": "enum ProtocolTypes.ClaimStatus",
+        "name": "to",
+        "type": "uint8"
+      }
+    ],
+    "name": "ClaimRegistryInvalidStatusTransition",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint64",
+        "name": "domainId",
+        "type": "uint64"
+      }
+    ],
+    "name": "ClaimRegistryMissingResolutionModule",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ClaimRegistryProtocolDependenciesAlreadyConfigured",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ClaimRegistryProtocolDependenciesNotConfigured",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "claimId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "replicationId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "actualClaimId",
+        "type": "uint256"
+      }
+    ],
+    "name": "ClaimRegistryReplicationClaimMismatch",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "replicationId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "decisionId",
+        "type": "uint256"
+      }
+    ],
+    "name": "ClaimRegistryReplicationDecisionExists",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "claimId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "enum ProtocolTypes.ClaimStatus",
+        "name": "status",
+        "type": "uint8"
+      }
+    ],
+    "name": "ClaimRegistryResolutionDecisionRequired",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "claimId",
+        "type": "uint256"
+      }
+    ],
+    "name": "ClaimRegistryTerminalClaim",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "claimId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "address",
+        "name": "actor",
+        "type": "address"
+      }
+    ],
+    "name": "ClaimRegistryUnauthorizedRevision",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "claimId",
+        "type": "uint256"
+      }
+    ],
+    "name": "ClaimRegistryUnknownClaim",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "replicationId",
+        "type": "uint256"
+      }
+    ],
+    "name": "ClaimRegistryUnknownReplication",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "decisionId",
+        "type": "uint256"
+      }
+    ],
+    "name": "ClaimRegistryUnknownResolutionDecision",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "module",
+        "type": "address"
+      }
+    ],
+    "name": "ClaimRegistryUnregisteredResolutionModule",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "replicationId",
+        "type": "uint256"
+      }
+    ],
+    "name": "ClaimRegistryUnresolvedReplication",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ClaimRegistryZeroAuthor",
+    "type": "error"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "claimId",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "author",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "uint64",
+        "name": "domainId",
+        "type": "uint64"
+      },
+      {
+        "indexed": false,
+        "internalType": "bytes32",
+        "name": "metadataHash",
+        "type": "bytes32"
+      },
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "resolutionModule",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "requiredAuthorBond",
+        "type": "uint256"
+      }
+    ],
+    "name": "ClaimCreated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "bondEscrow",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "replicationRegistry",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "actor",
+        "type": "address"
+      }
+    ],
+    "name": "ClaimProtocolDependenciesConfigured",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "priorClaimId",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "newClaimId",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "author",
+        "type": "address"
+      }
+    ],
+    "name": "ClaimRevised",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "claimId",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "enum ProtocolTypes.ClaimStatus",
+        "name": "oldStatus",
+        "type": "uint8"
+      },
+      {
+        "indexed": false,
+        "internalType": "enum ProtocolTypes.ClaimStatus",
+        "name": "newStatus",
+        "type": "uint8"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "actor",
+        "type": "address"
+      }
+    ],
+    "name": "ClaimStatusUpdated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "decisionId",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "claimId",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "replicationId",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "resolutionModule",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "enum ProtocolTypes.ResolutionStatus",
+        "name": "status",
+        "type": "uint8"
+      },
+      {
+        "indexed": false,
+        "internalType": "enum ProtocolTypes.ClaimStatus",
+        "name": "claimStatus",
+        "type": "uint8"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint16",
+        "name": "confidenceBps",
+        "type": "uint16"
+      },
+      {
+        "indexed": false,
+        "internalType": "bytes32",
+        "name": "resolutionHash",
+        "type": "bytes32"
+      },
+      {
+        "indexed": false,
+        "internalType": "bytes32",
+        "name": "evidenceHash",
+        "type": "bytes32"
+      },
+      {
+        "indexed": false,
+        "internalType": "enum ProtocolTypes.ResolverType",
+        "name": "resolverType",
+        "type": "uint8"
+      },
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "actor",
+        "type": "address"
+      }
+    ],
+    "name": "ResolutionDecisionRecorded",
+    "type": "event"
+  },
+  {
+    "inputs": [],
+    "name": "MIN_AUTHOR_BOND_PARAMETER_KEY",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "accessController",
+    "outputs": [
+      {
+        "internalType": "contract IAccessController",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "bondEscrow",
+    "outputs": [
+      {
+        "internalType": "contract IBondEscrow",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "claimId",
+        "type": "uint256"
+      }
+    ],
+    "name": "claimExists",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "bondEscrow_",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "replicationRegistry_",
+        "type": "address"
+      }
+    ],
+    "name": "configureProtocolDependencies",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "components": [
+          {
+            "internalType": "bytes32",
+            "name": "statementHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "methodologyHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "scopeHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "metadataHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "predictionHooksHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint64",
+            "name": "domainId",
+            "type": "uint64"
+          },
+          {
+            "internalType": "address",
+            "name": "author",
+            "type": "address"
+          }
+        ],
+        "internalType": "struct ProtocolTypes.ClaimSummary",
+        "name": "summary",
+        "type": "tuple"
+      },
+      {
+        "internalType": "uint256",
+        "name": "authorBondAmount",
+        "type": "uint256"
+      },
+      {
+        "internalType": "address",
+        "name": "resolutionModule",
+        "type": "address"
+      }
+    ],
+    "name": "createClaim",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "claimId",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "components": [
+          {
+            "internalType": "bytes32",
+            "name": "statementHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "methodologyHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "scopeHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "metadataHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "predictionHooksHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint64",
+            "name": "domainId",
+            "type": "uint64"
+          },
+          {
+            "internalType": "address",
+            "name": "author",
+            "type": "address"
+          }
+        ],
+        "internalType": "struct ProtocolTypes.ClaimSummary",
+        "name": "summary",
+        "type": "tuple"
+      },
+      {
+        "internalType": "uint256",
+        "name": "authorBondAmount",
+        "type": "uint256"
+      },
+      {
+        "internalType": "address",
+        "name": "resolutionModule",
+        "type": "address"
+      }
+    ],
+    "name": "createClaimOnBehalf",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "claimId",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "claimId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "replicationId",
+        "type": "uint256"
+      }
+    ],
+    "name": "finalizeClaimResolution",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "decisionId",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "claimId",
+        "type": "uint256"
+      }
+    ],
+    "name": "getClaim",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "uint256",
+            "name": "claimId",
+            "type": "uint256"
+          },
+          {
+            "components": [
+              {
+                "internalType": "bytes32",
+                "name": "statementHash",
+                "type": "bytes32"
+              },
+              {
+                "internalType": "bytes32",
+                "name": "methodologyHash",
+                "type": "bytes32"
+              },
+              {
+                "internalType": "bytes32",
+                "name": "scopeHash",
+                "type": "bytes32"
+              },
+              {
+                "internalType": "bytes32",
+                "name": "metadataHash",
+                "type": "bytes32"
+              },
+              {
+                "internalType": "bytes32",
+                "name": "predictionHooksHash",
+                "type": "bytes32"
+              },
+              {
+                "internalType": "uint64",
+                "name": "domainId",
+                "type": "uint64"
+              },
+              {
+                "internalType": "address",
+                "name": "author",
+                "type": "address"
+              }
+            ],
+            "internalType": "struct ProtocolTypes.ClaimSummary",
+            "name": "summary",
+            "type": "tuple"
+          },
+          {
+            "internalType": "enum ProtocolTypes.ClaimStatus",
+            "name": "status",
+            "type": "uint8"
+          },
+          {
+            "internalType": "uint256",
+            "name": "revisionOfClaimId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "createdAt",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "requiredAuthorBond",
+            "type": "uint256"
+          },
+          {
+            "internalType": "address",
+            "name": "resolutionModule",
+            "type": "address"
+          }
+        ],
+        "internalType": "struct ProtocolTypes.ClaimRecord",
+        "name": "",
+        "type": "tuple"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "claimId",
+        "type": "uint256"
+      }
+    ],
+    "name": "getClaimAuthor",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "claimId",
+        "type": "uint256"
+      }
+    ],
+    "name": "getClaimResolutionDecisionIds",
+    "outputs": [
+      {
+        "internalType": "uint256[]",
+        "name": "",
+        "type": "uint256[]"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "claimId",
+        "type": "uint256"
+      }
+    ],
+    "name": "getClaimResolutionModule",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "enum ProtocolTypes.ResolutionStatus",
+        "name": "status",
+        "type": "uint8"
+      }
+    ],
+    "name": "getClaimStatusForResolution",
+    "outputs": [
+      {
+        "internalType": "enum ProtocolTypes.ClaimStatus",
+        "name": "",
+        "type": "uint8"
+      }
+    ],
+    "stateMutability": "pure",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "claimId",
+        "type": "uint256"
+      }
+    ],
+    "name": "getLatestResolutionDecisionId",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "claimId",
+        "type": "uint256"
+      }
+    ],
+    "name": "getRequiredAuthorBond",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "decisionId",
+        "type": "uint256"
+      }
+    ],
+    "name": "getResolutionDecision",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "uint256",
+            "name": "decisionId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "claimId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "replicationId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "address",
+            "name": "resolutionModule",
+            "type": "address"
+          },
+          {
+            "internalType": "enum ProtocolTypes.ResolutionStatus",
+            "name": "status",
+            "type": "uint8"
+          },
+          {
+            "internalType": "enum ProtocolTypes.ClaimStatus",
+            "name": "claimStatus",
+            "type": "uint8"
+          },
+          {
+            "internalType": "uint16",
+            "name": "confidenceBps",
+            "type": "uint16"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "resolutionHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "evidenceHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "enum ProtocolTypes.ResolverType",
+            "name": "resolverType",
+            "type": "uint8"
+          },
+          {
+            "internalType": "uint256",
+            "name": "createdAt",
+            "type": "uint256"
+          },
+          {
+            "internalType": "address",
+            "name": "actor",
+            "type": "address"
+          }
+        ],
+        "internalType": "struct ProtocolTypes.ResolutionDecision",
+        "name": "",
+        "type": "tuple"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "nextClaimId",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "nextResolutionDecisionId",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "protocolParameters",
+    "outputs": [
+      {
+        "internalType": "contract IProtocolParameters",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "replicationRegistry",
+    "outputs": [
+      {
+        "internalType": "contract IReplicationRegistry",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "resolutionModuleRegistry",
+    "outputs": [
+      {
+        "internalType": "contract IResolutionModuleRegistry",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "priorClaimId",
+        "type": "uint256"
+      },
+      {
+        "components": [
+          {
+            "internalType": "bytes32",
+            "name": "statementHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "methodologyHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "scopeHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "metadataHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "predictionHooksHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint64",
+            "name": "domainId",
+            "type": "uint64"
+          },
+          {
+            "internalType": "address",
+            "name": "author",
+            "type": "address"
+          }
+        ],
+        "internalType": "struct ProtocolTypes.ClaimSummary",
+        "name": "summary",
+        "type": "tuple"
+      },
+      {
+        "internalType": "uint256",
+        "name": "authorBondAmount",
+        "type": "uint256"
+      },
+      {
+        "internalType": "address",
+        "name": "resolutionModule",
+        "type": "address"
+      }
+    ],
+    "name": "reviseClaim",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "newClaimId",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "claimId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "enum ProtocolTypes.ClaimStatus",
+        "name": "newStatus",
+        "type": "uint8"
+      }
+    ],
+    "name": "setClaimStatus",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  }
+]

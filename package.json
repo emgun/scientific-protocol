@@ -45,8 +45,17 @@
   },
   "files": [
     "dist",
+    "docs/claim-publication-bond-flow.md",
+    "docs/read-model-reorg-recovery.md",
+    "docs/run-your-own-gateway.md",
+    "docs/subgraph.md",
+    "examples/external-agent",
     "ops/migrations",
     "schemas",
+    "subgraph/abis",
+    "subgraph/schema.graphql",
+    "subgraph/src",
+    "subgraph/subgraph.yaml",
     "README.md"
   ],
   "type": "module",
@@ -84,7 +93,11 @@
     "service:gateway": "npm run service:dev -- gateway",
     "service:migrate": "npm run service:dev -- migrate",
     "service:sync": "npm run service:dev -- sync",
-    "indexer:rebuild:fresh": "bash script/run-with-node22-env.sh node --import tsx script/rebuild-read-model-fresh.ts"
+    "indexer:rebuild:fresh": "bash script/run-with-node22-env.sh node --import tsx script/rebuild-read-model-fresh.ts",
+    "subgraph:prepare": "npm run build && bash script/run-with-node22-env.sh node --import tsx script/generate-subgraph-assets.ts",
+    "subgraph:codegen": "npm run subgraph:prepare && cd subgraph && graph codegen subgraph.yaml",
+    "subgraph:build": "npm run subgraph:codegen && cd subgraph && graph build subgraph.yaml",
+    "subgraph:test": "npm run subgraph:build && bash script/run-with-node22-env.sh node --import tsx script/validate-subgraph.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1011.0",
@@ -97,6 +110,8 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.9",
+    "@graphprotocol/graph-cli": "^0.98.1",
+    "@graphprotocol/graph-ts": "^0.38.2",
     "@nomicfoundation/hardhat-ethers": "^4.0.0",
     "@nomicfoundation/hardhat-node-test-runner": "^3.0.11",
     "@openzeppelin/contracts": "^5.4.0",
@@ -105,6 +120,7 @@
     "ajv-formats": "^3.0.1",
     "chai": "^5.1.1",
     "hardhat": "^3.1.12",
+    "matchstick-as": "^0.6.0",
     "prettier": "^3.8.1",
     "prettier-plugin-solidity": "^2.3.1",
     "ts-node": "^10.9.2",

@@ -76,6 +76,7 @@ response remain downstream operator responsibilities.
 - JSON Schemas for canonical claim, replication, evaluation, and artifact-storage payloads
 - TypeScript SDK, generated contract bindings, and Python client
 - Reference API, indexer, worker, and read-model modules
+- A deployment-generated Graph subgraph for decentralized claim/evidence/governance queries
 - Source ingress, artifact persistence, review, work routing, and reward settlement primitives
 - Hardhat tests plus Foundry fuzz, invariant, and gas checks
 
@@ -134,6 +135,10 @@ docker run --rm scientific-protocol-service:0.3.0 help
 
 See [docs/reference-service.md](docs/reference-service.md) for service modes, migration commands,
 health/readiness, immutable image deployment, and rollback.
+
+Independent operators can follow [Run your own gateway](docs/run-your-own-gateway.md). External
+agents can use the credential-free [TypeScript and Python examples](examples/external-agent), and
+decentralized query operators can build the [v0.3 subgraph](docs/subgraph.md).
 
 ## Local Protocol Stack
 

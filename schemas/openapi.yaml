@@ -87,7 +87,7 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/SignedWriteRequest" }
+            schema: { $ref: "#/components/schemas/SignedClaimCreateRequest" }
       responses:
         "200": { $ref: "#/components/responses/JsonObject" }
         "401": { description: Signature or envelope rejected. }
@@ -290,6 +290,39 @@ components:
             properties:
               error: { type: string }
   schemas:
+    ClaimCreatePayload:
+      type: object
+      required: [statement, artifactUri, artifactSha256]
+      properties:
+        statement: { type: string, minLength: 1 }
+        artifactUri:
+          type: string
+          format: uri
+          pattern: "^(ipfs|ar|filecoin)://"
+          description: Retrievable immutable IPFS, Arweave, or Filecoin artifact locator.
+        artifactSha256:
+          type: string
+          pattern: "^(0x|sha256:)?[a-fA-F0-9]{64}$"
+          description: SHA-256 of the exact bytes retrieved from artifactUri.
+        artifactType: { type: integer, minimum: 1 }
+        authorBondEth: { type: string }
+        domainId: { type: integer, minimum: 0 }
+        metadata: { type: string }
+        methodology: { type: string }
+        predictionHooks: { type: string }
+        scope: { type: string }
+    SignedClaimCreateRequest:
+      type: object
+      required: [envelope, signature]
+      properties:
+        envelope:
+          allOf:
+            - $ref: "#/components/schemas/PublicWriteEnvelope"
+            - type: object
+              properties:
+                actionType: { const: claim_create }
+                payload: { $ref: "#/components/schemas/ClaimCreatePayload" }
+        signature: { type: string }
     SignedWriteRequest:
       type: object
       required: [envelope, signature]

@@ -57,6 +57,13 @@ metadata. See [docs/migrations/0.3.0.md](docs/migrations/0.3.0.md).
   Postgres write-rate limiter.
 - Bounded outbound requests with DNS/private-network containment and a public-service credential
   boundary that rejects funds-moving keys and reference-canary execution.
+- A deployment-derived Graph subgraph for claims, artifacts, replications, checkpoints, agents,
+  and governance, with deterministic code generation and build validation.
+- A run-your-own gateway guide and executable TypeScript and Python external-agent examples using
+  only the public read surface.
+- Crash-resumable signed claim creation. The signed request hash is committed onchain, accepted
+  requests use expiring database execution leases, and retries reconcile existing claim and
+  artifact events before sending another transaction.
 
 ### Changed
 
@@ -72,6 +79,9 @@ metadata. See [docs/migrations/0.3.0.md](docs/migrations/0.3.0.md).
   indexers hold a confirmation window and fail closed on a stored cursor/hash mismatch.
 - The reference indexer persists canonical resolution decisions and the exact decision id used to
   settle each forecast.
+- Public claim creation requires an immutable artifact locator and the exact SHA-256 digest. The
+  gateway verifies retrieved bytes before any draft transaction and stores that digest in
+  `ArtifactRegistry`.
 
 ## [0.2.2] — 2026-07-10
 

@@ -1586,6 +1586,9 @@ function createDependencyOverrides(
       };
       return request;
     },
+    readPublicWriteRequestByHash: async () => undefined,
+    reservePublicWriteRequestExecution: async () => true,
+    releasePublicWriteRequestExecution: async () => {},
     markPublicWriteRequestAccepted: async (_pool, requestId, outcomeDetail) => ({
       requestId,
       actionType: "claim_create" as const,

@@ -44,6 +44,9 @@ forward transitions.
 
 Canonical JSON schemas define claim, replication, evaluation, and artifact storage payloads. The
 TypeScript SDK, generated bindings, and Python client provide developer integration surfaces.
+The repository also includes a deployment-generated Graph subgraph covering core claim, artifact,
+replication, canonical decision, checkpoint, agent, and governance events. It provides an
+independently operated query surface without becoming a truth anchor.
 
 ### Reference Services
 
@@ -83,13 +86,16 @@ Applications and agent systems can integrate through package releases, generated
 deployment metadata, direct wallet flows, or a deployed reference API. The protocol surface is built
 to support multiple independent application, indexing, storage, and automation layers.
 
+The packaged service has a complete self-hosting path, and worked TypeScript/Python external-agent
+examples exercise public reads without privileged keys. Signed claim creation verifies the exact
+retrieved artifact bytes against a declared SHA-256 before any draft transaction.
+
 ## Current Gaps
 
 The core protocol loop is implemented. Remaining work is mostly hardening and ecosystem maturity:
 
-- broader third-party deployment documentation
 - external security review
 - release/version discipline for SDK, schemas, and generated bindings
 - stronger artifact retrieval diversity evidence
 - expanded property and integration tests for new modules
-- cleaner examples for independent operators and application builders
+- broader independently operated gateway and subgraph production evidence

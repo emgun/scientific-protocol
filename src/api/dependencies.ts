@@ -122,6 +122,9 @@ import {
   markPublicWriteRequestAccepted,
   markPublicWriteRequestPending,
   markPublicWriteRequestRejected,
+  readPublicWriteRequestByHash,
+  releasePublicWriteRequestExecution,
+  reservePublicWriteRequestExecution,
 } from "../shared/public-write-requests.js";
 import { readEnvValue } from "../shared/secrets.js";
 import {
@@ -177,6 +180,9 @@ export type ApiDependencies = {
   markPublicWriteRequestAccepted: typeof markPublicWriteRequestAccepted;
   markPublicWriteRequestPending: typeof markPublicWriteRequestPending;
   markPublicWriteRequestRejected: typeof markPublicWriteRequestRejected;
+  readPublicWriteRequestByHash: typeof readPublicWriteRequestByHash;
+  releasePublicWriteRequestExecution: typeof releasePublicWriteRequestExecution;
+  reservePublicWriteRequestExecution: typeof reservePublicWriteRequestExecution;
   openDefaultReviewTasksForClaim: typeof openDefaultReviewTasksForClaim;
   openDemoReplicationJob: typeof openDemoReplicationJob;
   processDemoReplicationJob: typeof processDemoReplicationJob;
@@ -340,6 +346,9 @@ export const defaultDependencies: ApiDependencies = {
   markPublicWriteRequestAccepted,
   markPublicWriteRequestPending,
   markPublicWriteRequestRejected,
+  readPublicWriteRequestByHash,
+  releasePublicWriteRequestExecution,
+  reservePublicWriteRequestExecution,
   openDefaultReviewTasksForClaim,
   openDemoReplicationJob,
   processDemoReplicationJob,

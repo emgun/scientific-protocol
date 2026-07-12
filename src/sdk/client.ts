@@ -58,6 +58,7 @@ import type {
   RewardProtocolConfigResponse,
   RewardSettlementHistoryResponse,
   SignedAgentRequestBody,
+  SignedClaimCreateRequestBody,
   SignedPublicWriteRequestBody,
   SourceDetailResponse,
   SourceEventsResponse,
@@ -233,7 +234,7 @@ export class ScientificProtocolClient {
   };
 
   readonly production = {
-    createClaim: (signedRequest: SignedPublicWriteRequestBody) =>
+    createClaim: (signedRequest: SignedClaimCreateRequestBody) =>
       this.request<DemoMutationResponse<ProductionClaimResult>>("/claims", {
         body: signedRequest,
         method: "POST",

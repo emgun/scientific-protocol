@@ -10,6 +10,11 @@ import type { ArtifactDraftInput, ArtifactIngestionResult } from "../src/artifac
 import { upsertPersistedArtifact } from "../src/coordinator/store.js";
 import { migrateReadModelDb } from "../src/indexer/store.js";
 import {
+  insertPublicWriteRequest,
+  releasePublicWriteRequestExecution,
+  reservePublicWriteRequestExecution,
+} from "../src/shared/public-write-requests.js";
+import {
   attemptSourceAutoPublication,
   type SourceAutoPublicationDependencies,
 } from "../src/sources/auto-publish.js";
@@ -881,6 +886,58 @@ describe("source ingress", { skip: database.skipReason }, () => {
            AND column_name = 'resolution_decision_id'`,
       );
       expect(columns.rows.map((row) => row.columnName)).to.deep.equal(["resolution_decision_id"]);
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it("serializes exact public-write replays with an expiring short DB lease", async () => {
+    const pool = await prepareSourceStore();
+    try {
+      const request = await insertPublicWriteRequest(pool, {
+        actionType: "claim_create",
+        actorAddress: "0x00000000000000000000000000000000000000aa",
+        chainId: 31337,
+        payload: { statement: "lease test" },
+        requestHash: `0x${randomUUID().replaceAll("-", "").padEnd(64, "0")}`,
+        requestNonce: randomUUID(),
+        scopeKey: "submit:lease-test",
+        signature: "0xsigned",
+        status: "pending",
+      });
+      const [first, concurrent] = await Promise.all([
+        reservePublicWriteRequestExecution(pool, {
+          leaseMs: 100,
+          leaseOwner: "worker-a",
+          requestId: request.requestId,
+        }),
+        reservePublicWriteRequestExecution(pool, {
+          leaseMs: 100,
+          leaseOwner: "worker-b",
+          requestId: request.requestId,
+        }),
+      ]);
+      expect([first, concurrent].filter(Boolean)).to.have.length(1);
+      const winner = first ? "worker-a" : "worker-b";
+      await releasePublicWriteRequestExecution(pool, {
+        leaseOwner: winner,
+        requestId: request.requestId,
+      });
+      expect(
+        await reservePublicWriteRequestExecution(pool, {
+          leaseMs: 5,
+          leaseOwner: "crashed-worker",
+          requestId: request.requestId,
+        }),
+      ).to.equal(true);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(
+        await reservePublicWriteRequestExecution(pool, {
+          leaseMs: 100,
+          leaseOwner: "recovery-worker",
+          requestId: request.requestId,
+        }),
+      ).to.equal(true);
     } finally {
       await pool.end();
     }

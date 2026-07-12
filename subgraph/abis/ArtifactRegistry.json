@@ -1,0 +1,223 @@
+[
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "claimRegistry_",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "constructor"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "artifactId",
+        "type": "uint256"
+      }
+    ],
+    "name": "ArtifactRegistryUnknownArtifact",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "claimId",
+        "type": "uint256"
+      }
+    ],
+    "name": "ArtifactRegistryUnknownClaim",
+    "type": "error"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "artifactId",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "claimId",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "enum ProtocolTypes.ArtifactType",
+        "name": "artifactType",
+        "type": "uint8"
+      },
+      {
+        "indexed": false,
+        "internalType": "bytes32",
+        "name": "contentDigest",
+        "type": "bytes32"
+      },
+      {
+        "indexed": false,
+        "internalType": "string",
+        "name": "uri",
+        "type": "string"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "submitter",
+        "type": "address"
+      }
+    ],
+    "name": "ArtifactAdded",
+    "type": "event"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "claimId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "enum ProtocolTypes.ArtifactType",
+        "name": "artifactType",
+        "type": "uint8"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "contentDigest",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "string",
+        "name": "uri",
+        "type": "string"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "metadataHash",
+        "type": "bytes32"
+      }
+    ],
+    "name": "addArtifact",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "artifactId",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "claimRegistry",
+    "outputs": [
+      {
+        "internalType": "contract IClaimRegistry",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "artifactId",
+        "type": "uint256"
+      }
+    ],
+    "name": "getArtifact",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "uint256",
+            "name": "artifactId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "claimId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "enum ProtocolTypes.ArtifactType",
+            "name": "artifactType",
+            "type": "uint8"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "contentDigest",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "string",
+            "name": "uri",
+            "type": "string"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "metadataHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "address",
+            "name": "submitter",
+            "type": "address"
+          },
+          {
+            "internalType": "uint256",
+            "name": "createdAt",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct ProtocolTypes.ArtifactCommitment",
+        "name": "",
+        "type": "tuple"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "claimId",
+        "type": "uint256"
+      }
+    ],
+    "name": "getClaimArtifactIds",
+    "outputs": [
+      {
+        "internalType": "uint256[]",
+        "name": "",
+        "type": "uint256[]"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "nextArtifactId",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  }
+]

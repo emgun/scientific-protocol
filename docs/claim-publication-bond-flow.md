@@ -2,7 +2,8 @@
 
 Service-assisted claim creation is deliberately two-step:
 
-1. the signed `claim_create` request creates an onchain `Draft` and attaches its artifact;
+1. the signed `claim_create` request binds an immutable artifact URI and exact SHA-256, creates an
+   onchain `Draft`, and attaches the verified artifact;
 2. the author wallet deposits the declared bond directly into `BondEscrow.depositAuthorBond`;
 3. the author signs a `claim_publish` request scoped to `claim:<id>`;
 4. the operated resolver verifies `BondEscrow.isAuthorBondSatisfied(id)` onchain and only then moves
@@ -16,6 +17,12 @@ The original `claim_create` request remains durable while chain effects run. As 
 attachment fails, that checkpoint is retained with `reconciliation_required` detail rather than
 losing the onchain draft. A successful create returns `publicationStatus: awaiting_author_bond` and
 does not open replication work.
+
+The claim metadata commitment binds the signed request hash. Exact signed-request replays resume
+the same request row under a request-scoped advisory lock, locate any already-mined claim by that
+unique commitment, and attach the exact verified artifact only if it is absent. A different payload
+using the same nonce remains rejected. This closes crashes before creation, between creation and
+checkpointing, and after artifact attachment without creating a second claim.
 
 Source auto-publication follows the same rule. Consensus may prepare a draft, but the source remains
 `ready_for_publication` and its publication attempt remains `claim_ready` until the source author

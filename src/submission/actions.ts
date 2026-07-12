@@ -1,21 +1,41 @@
+import type { EventLog } from "ethers";
 import type { Pool } from "pg";
 import type { ArtifactDraftInput } from "../artifacts/ingestion.js";
-import { prepareCoordinatorStore, type ReplicationJobView } from "../coordinator/store.js";
+import {
+  prepareCoordinatorStore,
+  type ReplicationJobView,
+  readPersistedArtifact,
+} from "../coordinator/store.js";
 import { extractContractEventId, getContract } from "../shared/contracts.js";
 import { getDeploymentPath, loadDeploymentFile } from "../shared/deployment.js";
 import { keccakText } from "../shared/hash.js";
+import { isIpfsUrl, parseIpfsUrl } from "../shared/ipfs.js";
 import {
   resolveEtherInput,
   resolveIntegerInput,
   resolveNonEmptyStringInput,
 } from "../shared/numbers.js";
 import { createManagedOperatorSigner } from "../shared/operator.js";
+import { fetchBoundedOutbound, type OutboundRequestPolicy } from "../shared/outbound-request.js";
+import { sha256Hex } from "../shared/sha256.js";
 import { ingestSource, type SourceIngestionResult } from "../sources/service.js";
 
 type CoordinatorConnection = Pool | string | undefined;
 
+type ProductionClaimOptions = {
+  env?: NodeJS.ProcessEnv;
+  requestHash?: string;
+  faultInjection?: "before-create" | "after-create-before-checkpoint" | "after-artifact";
+  onClaimDraftCreated?: (checkpoint: {
+    claimId: string;
+    createClaimTxHash: string;
+  }) => Promise<void>;
+  onClaimReady?: (checkpoint: ProductionClaimReadyCheckpoint) => Promise<void>;
+};
+
 export type ProductionClaimInput = {
   artifactType?: number;
+  artifactSha256?: string;
   artifactUri: string;
   authorBondEth?: string;
   domainId?: number;
@@ -51,19 +71,103 @@ export type ProductionArtifactDraftInput = ArtifactDraftInput;
 export type ProductionArtifactDraftResult = SourceIngestionResult;
 
 const DEFAULT_AUTHOR_BOND_ETH = "0.005";
+const DEFAULT_CLAIM_ARTIFACT_MAX_BYTES = 32 * 1024 * 1024;
 
-export async function createProductionClaim(
+function normalizeSha256(value: string): string {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/^sha256:/u, "")
+    .replace(/^0x/u, "");
+  if (!/^[0-9a-f]{64}$/u.test(normalized)) {
+    throw new Error("artifactSha256 must be a 32-byte hexadecimal SHA-256 digest");
+  }
+  return normalized;
+}
+
+function retrievableArtifactUrl(uri: string, env: NodeJS.ProcessEnv): string {
+  let locator: { cid: string; path?: string };
+  if (isIpfsUrl(uri)) {
+    locator = parseIpfsUrl(uri);
+  } else {
+    const parsed = new URL(uri);
+    if (parsed.protocol === "ar:") {
+      const transactionId = parsed.host || parsed.pathname.replace(/^\/+/, "");
+      if (!transactionId) throw new Error("invalid ar artifact locator");
+      return `${(env.SP_ARTIFACT_ARWEAVE_GATEWAY_URL ?? "https://arweave.net").replace(/\/+$/u, "")}/${transactionId}`;
+    }
+    if (parsed.protocol !== "filecoin:") {
+      throw new Error("claim artifactUri must use ipfs://, ar://, or filecoin://");
+    }
+    const cid = parsed.host || parsed.pathname.replace(/^\/+/, "");
+    if (!cid) throw new Error("invalid filecoin artifact locator");
+    locator = { cid };
+  }
+  const base = (env.SP_ARTIFACT_IPFS_GATEWAY_URL ?? "https://w3s.link/ipfs")
+    .trim()
+    .replace(/\/+$/u, "");
+  const normalizedBase = base.endsWith("/ipfs") ? base : `${base}/ipfs`;
+  return `${normalizedBase}/${locator.cid}${locator.path ? `/${locator.path}` : ""}`;
+}
+
+export async function runClaimCreationSaga(input: {
+  attachArtifact: (claimId: string) => Promise<{ artifactId: string; txHash: string }>;
+  checkpoint: (claimId: string, txHash: string) => Promise<void>;
+  createClaim: () => Promise<{ claimId: string; txHash: string }>;
+  faultInjection?: ProductionClaimOptions["faultInjection"];
+  findArtifact: (claimId: string) => Promise<{ artifactId: string; txHash: string } | null>;
+  findClaim: () => Promise<{ claimId: string; txHash: string } | null>;
+}): Promise<{ artifactId: string; artifactTxHash: string; claimId: string; claimTxHash: string }> {
+  if (input.faultInjection === "before-create") throw new Error("fault_injected_before_create");
+  const existingClaim = await input.findClaim();
+  const claim = existingClaim ?? (await input.createClaim());
+  if (!existingClaim && input.faultInjection === "after-create-before-checkpoint") {
+    throw new Error("fault_injected_after_create_before_checkpoint");
+  }
+  await input.checkpoint(claim.claimId, claim.txHash);
+  const existingArtifact = await input.findArtifact(claim.claimId);
+  const artifact = existingArtifact ?? (await input.attachArtifact(claim.claimId));
+  if (!existingArtifact && input.faultInjection === "after-artifact") {
+    throw new Error("fault_injected_after_artifact");
+  }
+  return {
+    artifactId: artifact.artifactId,
+    artifactTxHash: artifact.txHash,
+    claimId: claim.claimId,
+    claimTxHash: claim.txHash,
+  };
+}
+
+export async function verifyProductionClaimArtifact(
+  input: Pick<ProductionClaimInput, "artifactSha256" | "artifactUri">,
+  options: OutboundRequestPolicy & { env?: NodeJS.ProcessEnv } = {},
+): Promise<{ contentDigest: string; sizeBytes: number }> {
+  const uri = input.artifactUri.trim();
+  if (!uri) throw new Error("artifactUri is required");
+  const expected = normalizeSha256(input.artifactSha256 ?? "");
+  const response = await fetchBoundedOutbound(
+    retrievableArtifactUrl(uri, options.env ?? process.env),
+    {},
+    {
+      ...options,
+      maxBytes: options.maxBytes ?? DEFAULT_CLAIM_ARTIFACT_MAX_BYTES,
+    },
+  );
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`claim artifact retrieval failed with status ${response.status}`);
+  }
+  const observed = sha256Hex(response.body);
+  if (observed !== expected) {
+    throw new Error(`claim artifact SHA-256 mismatch: expected ${expected}, observed ${observed}`);
+  }
+  return { contentDigest: `0x${observed}`, sizeBytes: response.body.byteLength };
+}
+
+async function createProductionClaimLocked(
   input: ProductionClaimInput,
   authorAddress: string,
-  _connection?: CoordinatorConnection,
-  options: {
-    env?: NodeJS.ProcessEnv;
-    onClaimDraftCreated?: (checkpoint: {
-      claimId: string;
-      createClaimTxHash: string;
-    }) => Promise<void>;
-    onClaimReady?: (checkpoint: ProductionClaimReadyCheckpoint) => Promise<void>;
-  } = {},
+  verifiedArtifact: { contentDigest: string; sizeBytes: number },
+  options: ProductionClaimOptions,
 ): Promise<ProductionClaimResult> {
   const env = options.env ?? process.env;
   if (!input.statement || input.statement.trim() === "") {
@@ -95,60 +199,122 @@ export async function createProductionClaim(
   const metadata = resolveNonEmptyStringInput(input.metadata, "production-metadata");
   const predictionHooks = resolveNonEmptyStringInput(input.predictionHooks, "production-hooks");
 
-  const createTx = await claimRegistryAsSubmitter.createClaimOnBehalf(
-    {
-      statementHash: keccakText(statement),
-      methodologyHash: keccakText(methodology),
-      scopeHash: keccakText(scope),
-      metadataHash: keccakText(metadata),
-      predictionHooksHash: keccakText(predictionHooks),
-      domainId: BigInt(domainId),
-      author: authorAddress,
-    },
-    authorBond,
-    "0x0000000000000000000000000000000000000000",
-  );
-  const createReceipt = await createTx.wait();
-  const claimId = extractContractEventId(
-    claimRegistryAsSubmitter,
-    createReceipt,
-    "ClaimCreated",
-    "claimId",
-  );
-  if (!claimId) {
-    throw new Error(`claim transaction ${createReceipt.hash} did not emit ClaimCreated`);
+  const requestCommitment = options.requestHash?.toLowerCase();
+  const latestBlock = await claimRegistryAsSubmitter.runner?.provider?.getBlockNumber();
+  if (requestCommitment && latestBlock === undefined) {
+    throw new Error("claim reconciliation requires a provider-backed contract");
   }
-  await options.onClaimDraftCreated?.({ claimId, createClaimTxHash: createReceipt.hash });
+  const searchFrom = Math.max(
+    deployment.deploymentBlock,
+    (latestBlock ?? deployment.deploymentBlock) -
+      resolveIntegerInput(
+        Number(env.SP_CLAIM_RECONCILIATION_MAX_BLOCKS ?? 50_000),
+        50_000,
+        "SP_CLAIM_RECONCILIATION_MAX_BLOCKS",
+        { min: 1 },
+      ),
+  );
+  const claimEvents = requestCommitment
+    ? await claimRegistryAsSubmitter.queryFilter(
+        claimRegistryAsSubmitter.filters.ClaimCreated(null, authorAddress),
+        searchFrom,
+        latestBlock,
+      )
+    : [];
+  const existingClaimEvent = claimEvents.find(
+    (event): event is EventLog =>
+      "args" in event && event.args.metadataHash.toLowerCase() === requestCommitment,
+  );
 
-  const addArtifactTx = await artifactRegistry.addArtifact(
-    BigInt(claimId),
-    BigInt(artifactType),
-    keccakText(`${statement}:${input.artifactUri}`),
-    input.artifactUri.trim(),
-    keccakText(metadata),
-  );
-  const addArtifactReceipt = await addArtifactTx.wait();
-  const artifactId = extractContractEventId(
-    artifactRegistry,
-    addArtifactReceipt,
-    "ArtifactAdded",
-    "artifactId",
-  );
+  const saga = await runClaimCreationSaga({
+    faultInjection: options.faultInjection,
+    findClaim: async () =>
+      existingClaimEvent
+        ? {
+            claimId: existingClaimEvent.args.claimId.toString(),
+            txHash: existingClaimEvent.transactionHash,
+          }
+        : null,
+    createClaim: async () => {
+      const createTx = await claimRegistryAsSubmitter.createClaimOnBehalf(
+        {
+          statementHash: keccakText(statement),
+          methodologyHash: keccakText(methodology),
+          scopeHash: keccakText(scope),
+          metadataHash: requestCommitment ?? keccakText(metadata),
+          predictionHooksHash: keccakText(predictionHooks),
+          domainId: BigInt(domainId),
+          author: authorAddress,
+        },
+        authorBond,
+        "0x0000000000000000000000000000000000000000",
+      );
+      const receipt = await createTx.wait();
+      const claimId = extractContractEventId(
+        claimRegistryAsSubmitter,
+        receipt,
+        "ClaimCreated",
+        "claimId",
+      );
+      if (!claimId) throw new Error(`claim transaction ${receipt.hash} did not emit ClaimCreated`);
+      return { claimId, txHash: receipt.hash };
+    },
+    checkpoint: async (claimId, txHash) => {
+      await options.onClaimDraftCreated?.({ claimId, createClaimTxHash: txHash });
+    },
+    findArtifact: async (claimId) => {
+      const artifactIds = await artifactRegistry.getClaimArtifactIds(BigInt(claimId));
+      for (const id of artifactIds) {
+        const artifact = await artifactRegistry.getArtifact(id);
+        if (
+          artifact.contentDigest.toLowerCase() === verifiedArtifact.contentDigest.toLowerCase() &&
+          artifact.uri === input.artifactUri.trim()
+        ) {
+          const events = await artifactRegistry.queryFilter(
+            artifactRegistry.filters.ArtifactAdded(id, BigInt(claimId)),
+            searchFrom,
+            latestBlock,
+          );
+          return { artifactId: id.toString(), txHash: events[0]?.transactionHash ?? "0x" };
+        }
+      }
+      return null;
+    },
+    attachArtifact: async (claimId) => {
+      const tx = await artifactRegistry.addArtifact(
+        BigInt(claimId),
+        BigInt(artifactType),
+        verifiedArtifact.contentDigest,
+        input.artifactUri.trim(),
+        keccakText(metadata),
+      );
+      const receipt = await tx.wait();
+      const artifactId = extractContractEventId(
+        artifactRegistry,
+        receipt,
+        "ArtifactAdded",
+        "artifactId",
+      );
+      if (!artifactId)
+        throw new Error(`artifact transaction ${receipt.hash} did not emit ArtifactAdded`);
+      return { artifactId, txHash: receipt.hash };
+    },
+  });
 
   // Replication work cannot open until the author funds the declared bond and
   // explicitly publishes through the second signed action.
   const job: ReplicationJobView | null = null;
 
   const result = {
-    artifactId,
+    artifactId: saga.artifactId,
     author: authorAddress,
-    claimId,
+    claimId: saga.claimId,
     job,
     publicationStatus: "awaiting_author_bond" as const,
     submittedBy,
     txHashes: {
-      addArtifact: addArtifactReceipt.hash,
-      createClaim: createReceipt.hash,
+      addArtifact: saga.artifactTxHash,
+      createClaim: saga.claimTxHash,
     },
   };
   await options.onClaimReady?.({
@@ -161,6 +327,26 @@ export async function createProductionClaim(
     ),
   });
   return result;
+}
+
+export async function createProductionClaim(
+  input: ProductionClaimInput,
+  authorAddress: string,
+  connection?: CoordinatorConnection,
+  options: ProductionClaimOptions = {},
+): Promise<ProductionClaimResult> {
+  const env = options.env ?? process.env;
+  // Fetch and verify before loading deployment state, acquiring DB locks, or sending any chain tx.
+  let verifiedArtifact: { contentDigest: string; sizeBytes: number };
+  const persistedArtifactKey = input.artifactUri.match(/^persisted-artifact:\/\/(.+)$/u)?.[1];
+  if (persistedArtifactKey && connection && typeof connection !== "string") {
+    const persisted = await readPersistedArtifact(connection, persistedArtifactKey);
+    if (!persisted) throw new Error("claim persisted artifact was not found");
+    verifiedArtifact = { contentDigest: persisted.sha256, sizeBytes: persisted.byteLength };
+  } else {
+    verifiedArtifact = await verifyProductionClaimArtifact(input, { env });
+  }
+  return createProductionClaimLocked(input, authorAddress, verifiedArtifact, options);
 }
 
 export async function publishProductionClaim(

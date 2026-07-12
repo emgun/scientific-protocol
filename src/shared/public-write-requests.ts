@@ -203,6 +203,46 @@ export async function readPublicWriteRequest(
   };
 }
 
+export async function readPublicWriteRequestByHash(
+  queryable: Queryable,
+  requestHash: string,
+): Promise<PublicWriteRequestView | undefined> {
+  const result = await queryable.query<{ requestId: string }>(
+    `SELECT request_id::text AS "requestId" FROM public_write_requests WHERE request_hash = $1`,
+    [requestHash],
+  );
+  const requestId = result.rows[0]?.requestId;
+  return requestId ? readPublicWriteRequest(queryable, requestId) : undefined;
+}
+
+export async function reservePublicWriteRequestExecution(
+  queryable: Queryable,
+  input: { leaseMs: number; leaseOwner: string; requestId: string },
+): Promise<boolean> {
+  const result = await queryable.query(
+    `UPDATE public_write_requests
+     SET execution_lease_owner = $2,
+         execution_lease_expires_at = NOW() + ($3::text || ' milliseconds')::interval,
+         updated_at = NOW()
+     WHERE request_id = $1
+       AND (execution_lease_expires_at IS NULL OR execution_lease_expires_at <= NOW())`,
+    [input.requestId, input.leaseOwner, input.leaseMs],
+  );
+  return result.rowCount === 1;
+}
+
+export async function releasePublicWriteRequestExecution(
+  queryable: Queryable,
+  input: { leaseOwner: string; requestId: string },
+): Promise<void> {
+  await queryable.query(
+    `UPDATE public_write_requests
+     SET execution_lease_owner = NULL, execution_lease_expires_at = NULL, updated_at = NOW()
+     WHERE request_id = $1 AND execution_lease_owner = $2`,
+    [input.requestId, input.leaseOwner],
+  );
+}
+
 export {
   hashPublicWriteEnvelope,
   type PublicWriteActionType,
