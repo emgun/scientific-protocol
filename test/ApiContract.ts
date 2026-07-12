@@ -7,6 +7,7 @@ import { parse } from "yaml";
 import { PUBLIC_API_OPERATIONS } from "../src/api/public-contract.js";
 
 type OpenApiDocument = {
+  components?: { schemas?: Record<string, { properties?: Record<string, { enum?: string[] }> }> };
   info?: { version?: string };
   openapi?: string;
   paths?: Record<string, Record<string, unknown>>;
@@ -18,6 +19,10 @@ describe("published API contracts", () => {
     expect(document.openapi).to.equal("3.1.0");
     expect(document.info?.version).to.equal("0.3.0");
     expect(document.paths).not.to.have.property("/sources#post");
+    expect(document.paths).to.have.property("/claims/{claimId}/publish");
+    expect(
+      document.components?.schemas?.PublicWriteEnvelope?.properties?.actionType?.enum,
+    ).to.include("claim_publish");
 
     const documented = Object.entries(document.paths ?? {}).flatMap(([pathname, pathItem]) =>
       Object.keys(pathItem)

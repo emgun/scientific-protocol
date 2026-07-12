@@ -10,6 +10,7 @@ import {
   getDeploymentPath,
   loadDeploymentFile,
 } from "../shared/deployment.js";
+import { isLocalDevelopmentRpcUrl } from "../shared/env.js";
 import type {
   AgentControllerView,
   AgentView,
@@ -21,6 +22,7 @@ import type {
   ForecastView,
   ReadModel,
   ReplicationView,
+  ResolutionDecisionView,
 } from "../shared/read-model.js";
 import { readEnvValue } from "../shared/secrets.js";
 import {
@@ -35,15 +37,18 @@ import {
   getDatabaseUrl,
   insertArtifact,
   insertCheckpoint,
+  insertResolutionDecision,
   markSyncFailed,
   markSyncStarted,
   markSyncSucceeded,
   prepareReadModelStore,
   type ReadModelCounts,
+  readIndexerBlockCheckpoint,
   readMetadata,
   readReadModel,
   readReadModelCounts,
   readSyncCursor,
+  recordIndexerBlockCheckpoint,
   releaseReadModelSyncLock,
   updateClaimStatus,
   updateReadModelMetadata,
@@ -77,6 +82,7 @@ type SyncedContracts = {
 type ChunkEvents = {
   claimCreatedEvents: EventLog[];
   claimStatusEvents: EventLog[];
+  resolutionDecisionEvents: EventLog[];
   artifactEvents: EventLog[];
   replicationSubmittedEvents: EventLog[];
   replicationResolvedEvents: EventLog[];
@@ -102,6 +108,20 @@ type ChunkEvents = {
 
 export function getSyncBatchSize(env: NodeJS.ProcessEnv = process.env): number {
   return readPositiveIntegerEnv(env, "SP_INDEXER_BATCH_SIZE", 1000);
+}
+
+export function getIndexerConfirmationDepth(env: NodeJS.ProcessEnv = process.env): number {
+  const fallback = isLocalDevelopmentRpcUrl(getRpcUrl(env)) ? 0 : 12;
+  return readPositiveIntegerEnv(env, "SP_INDEXER_CONFIRMATION_DEPTH", fallback, { min: 0 });
+}
+
+export class ReadModelReorgDetectedError extends Error {
+  constructor(blockNumber: number, storedHash: string, canonicalHash: string) {
+    super(
+      `read model reorg detected at block ${blockNumber}: stored ${storedHash}, canonical ${canonicalHash}; rebuild is required`,
+    );
+    this.name = "ReadModelReorgDetectedError";
+  }
 }
 
 export function getQueryRetryLimit(env: NodeJS.ProcessEnv = process.env): number {
@@ -206,7 +226,11 @@ export async function syncReadModel(
   const headProvider = getProvider(getRpcUrl(env));
   let latestBlock: number;
   try {
-    latestBlock = await headProvider.getBlockNumber();
+    const chainHead = await headProvider.getBlockNumber();
+    latestBlock = Math.max(
+      Number(deployment.deploymentBlock) - 1,
+      chainHead - getIndexerConfirmationDepth(env),
+    );
   } finally {
     headProvider.destroy();
   }
@@ -223,6 +247,17 @@ export async function syncReadModel(
     contracts = await loadSyncedContracts(deployment, env);
 
     let currentCursor = await readSyncCursor(pool);
+    if (currentCursor !== null && currentCursor >= deployment.deploymentBlock) {
+      const canonicalBlock = await contracts.provider.getBlock(currentCursor);
+      if (!canonicalBlock?.hash) throw new Error(`unable to read canonical block ${currentCursor}`);
+      const storedHash = await readIndexerBlockCheckpoint(pool, currentCursor);
+      if (storedHash && storedHash.toLowerCase() !== canonicalBlock.hash.toLowerCase()) {
+        throw new ReadModelReorgDetectedError(currentCursor, storedHash, canonicalBlock.hash);
+      }
+      if (!storedHash) {
+        await recordIndexerBlockCheckpoint(pool, currentCursor, canonicalBlock.hash);
+      }
+    }
     let fromBlock = Math.max(
       deployment.deploymentBlock,
       (currentCursor ?? deployment.deploymentBlock - 1) + 1,
@@ -232,7 +267,9 @@ export async function syncReadModel(
     while (fromBlock <= latestBlock) {
       const toBlock = Math.min(fromBlock + batchSize - 1, latestBlock);
       const chunkEvents = await fetchChunkEvents(contracts, fromBlock, toBlock, env);
-      await applyChunk(pool, deployment, contracts, chunkEvents, toBlock);
+      const canonicalBlock = await contracts.provider.getBlock(toBlock);
+      if (!canonicalBlock?.hash) throw new Error(`unable to read canonical block ${toBlock}`);
+      await applyChunk(pool, deployment, contracts, chunkEvents, toBlock, canonicalBlock.hash);
       currentCursor = toBlock;
       fromBlock = currentCursor + 1;
     }
@@ -353,6 +390,12 @@ async function fetchChunkEvents(
     () =>
       contracts.claimRegistry.queryFilter(
         contracts.claimRegistry.filters.ClaimStatusUpdated(),
+        fromBlock,
+        toBlock,
+      ),
+    () =>
+      contracts.claimRegistry.queryFilter(
+        contracts.claimRegistry.filters.ResolutionDecisionRecorded(),
         fromBlock,
         toBlock,
       ),
@@ -492,6 +535,7 @@ async function fetchChunkEvents(
   const [
     claimCreatedEvents,
     claimStatusEvents,
+    resolutionDecisionEvents,
     artifactEvents,
     replicationSubmittedEvents,
     replicationResolvedEvents,
@@ -518,6 +562,7 @@ async function fetchChunkEvents(
   return {
     claimCreatedEvents,
     claimStatusEvents,
+    resolutionDecisionEvents,
     artifactEvents,
     replicationSubmittedEvents,
     replicationResolvedEvents,
@@ -548,6 +593,7 @@ async function applyChunk(
   contracts: SyncedContracts,
   events: ChunkEvents,
   chunkEndBlock: number,
+  chunkEndBlockHash: string,
 ): Promise<void> {
   const createdClaims: ClaimView[] = [];
   for (const event of events.claimCreatedEvents) {
@@ -573,6 +619,26 @@ async function applyChunk(
     uri: event.args.uri,
     submitter: event.args.submitter,
   }));
+
+  const resolutionDecisions: ResolutionDecisionView[] = await Promise.all(
+    events.resolutionDecisionEvents.map(async (event) => {
+      const decision = await contracts.claimRegistry.getResolutionDecision(event.args.decisionId);
+      return {
+        decisionId: event.args.decisionId.toString(),
+        claimId: event.args.claimId.toString(),
+        replicationId: event.args.replicationId.toString(),
+        resolutionModule: event.args.resolutionModule,
+        status: Number(event.args.status),
+        claimStatus: Number(event.args.claimStatus),
+        confidenceBps: Number(event.args.confidenceBps),
+        resolutionHash: event.args.resolutionHash,
+        evidenceHash: event.args.evidenceHash,
+        resolverType: Number(event.args.resolverType),
+        createdAt: decision.createdAt.toString(),
+        actor: event.args.actor,
+      };
+    }),
+  );
 
   const submittedReplications: ReplicationView[] = events.replicationSubmittedEvents.map(
     (event) => ({
@@ -670,6 +736,8 @@ async function applyChunk(
         settled: record.settled,
         direction: Number(record.direction),
         confidenceBps: Number(record.confidenceBps),
+        resolutionDecisionId:
+          record.resolutionDecisionId === 0n ? null : record.resolutionDecisionId.toString(),
         finalStatus: null,
         matched: null,
         payoutAmount: null,
@@ -776,6 +844,10 @@ async function applyChunk(
       });
     }
 
+    for (const decision of resolutionDecisions) {
+      await insertResolutionDecision(client, decision);
+    }
+
     for (const checkpoint of checkpoints) {
       await insertCheckpoint(client, checkpoint);
     }
@@ -796,6 +868,7 @@ async function applyChunk(
       await applyForecastSettlement(
         client,
         event.args.forecastId.toString(),
+        event.args.resolutionDecisionId.toString(),
         Number(event.args.finalStatus),
         event.args.matched,
         event.args.payoutAmount.toString(),
@@ -845,7 +918,7 @@ async function applyChunk(
       deploymentBlock: deployment.deploymentBlock,
       latestBlock: chunkEndBlock,
     });
-    await writeSyncCursor(client, chunkEndBlock);
+    await writeSyncCursor(client, chunkEndBlock, chunkEndBlockHash);
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");

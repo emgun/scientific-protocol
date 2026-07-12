@@ -1,11 +1,9 @@
 import assert from "node:assert/strict";
-import { execFile as execFileCallback } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { promisify } from "node:util";
 import { expect } from "chai";
 import {
   ingestArtifactSource,
@@ -16,25 +14,30 @@ import {
   verifyPersistedArtifact,
 } from "../src/shared/persisted-artifacts.js";
 
-const execFile = promisify(execFileCallback);
-
 describe("ArtifactIngestion", () => {
   it("rejects unsupported binary manuscripts instead of persisting decoded garbage", async () => {
     const artifactRoot = await mkdtemp(path.join(os.tmpdir(), "sp-ingest-binary-"));
-    const sourcePath = path.join(artifactRoot, "paper.djvu");
-    await writeFile(
-      sourcePath,
-      Buffer.concat([
-        Buffer.from("AT&TFORM\u0000\u0000\u0000\u0018DJVMDIRM", "binary"),
-        Buffer.from(Array.from({ length: 256 }, (_, index) => index)),
-      ]),
-    );
+    const binary = Buffer.concat([
+      Buffer.from("AT&TFORM\u0000\u0000\u0000\u0018DJVMDIRM", "binary"),
+      Buffer.from(Array.from({ length: 256 }, (_, index) => index)),
+    ]);
 
     try {
       await assert.rejects(
         ingestArtifactSource(
-          { sourceType: "url", sourceUrl: sourcePath },
-          { backend: "filesystem", filesystemRoot: artifactRoot },
+          { sourceType: "url", sourceUrl: "ipfs://bafybinary/paper.djvu" },
+          {
+            backend: "filesystem",
+            filesystemRoot: artifactRoot,
+            ipfsClient: {
+              async addObject() {
+                throw new Error("unexpected write");
+              },
+              async readObject() {
+                return binary;
+              },
+            },
+          },
         ),
         UnsupportedArtifactContentError,
       );
@@ -98,6 +101,10 @@ describe("ArtifactIngestion", () => {
         },
         {
           backend: "filesystem",
+          env: {
+            SP_OUTBOUND_ALLOW_PRIVATE_NETWORKS: "true",
+            SP_REFERENCE_CANARY_MODE: "true",
+          },
           filesystemRoot: artifactRoot,
         },
       );
@@ -129,51 +136,17 @@ describe("ArtifactIngestion", () => {
     }
   });
 
-  it("snapshots a repository at a pinned commit and extracts a draft preview from the readme", async () => {
+  it("rejects local repository paths", async () => {
     const artifactRoot = await mkdtemp(path.join(os.tmpdir(), "sp-ingest-repo-"));
-    const repoRoot = await mkdtemp(path.join(os.tmpdir(), "sp-ingest-repo-source-"));
-    const repoPath = path.join(repoRoot, "demo-repo");
-
-    await mkdir(repoPath, { recursive: true });
-    await execFile("git", ["init"], { cwd: repoPath });
-    await execFile("git", ["config", "user.email", "scientific-protocol@example.com"], {
-      cwd: repoPath,
-    });
-    await execFile("git", ["config", "user.name", "Scientific Protocol"], { cwd: repoPath });
-    await writeFile(
-      path.join(repoPath, "README.md"),
-      [
-        "# Benchmark rerun package",
-        "",
-        "This repository demonstrates that the published benchmark bundle preserves the reported model ranking when rerun from source.",
-        "It also records the manifest expected by an external replication worker.",
-      ].join("\n"),
-      "utf8",
-    );
-    await execFile("git", ["add", "README.md"], { cwd: repoPath });
-    await execFile("git", ["commit", "-m", "Initial snapshot"], { cwd: repoPath });
-
     try {
-      const result = await ingestArtifactSource(
-        {
-          repositoryUrl: repoPath,
-          sourceType: "repository",
-        },
-        {
-          backend: "filesystem",
-          filesystemRoot: artifactRoot,
-        },
+      await assert.rejects(
+        ingestArtifactSource(
+          { repositoryUrl: "/tmp/local-repository", sourceType: "repository" },
+          { backend: "filesystem", filesystemRoot: artifactRoot },
+        ),
+        /absolute URL/,
       );
-
-      expect(result.artifactType).to.equal(1);
-      expect(result.sourceVersion.commitHash).to.match(/^[0-9a-f]{40}$/);
-      expect(result.preview.title).to.equal("demo-repo");
-      expect(result.preview.statement).to.contain("preserves the reported model ranking");
-      expect(result.snapshotArtifact.storagePath.endsWith(".tar.gz")).to.equal(true);
-      expect(await verifyPersistedArtifact(result.snapshotArtifact)).to.equal(true);
-      expect(await verifyPersistedArtifact(result.extractionArtifact)).to.equal(true);
     } finally {
-      await rm(repoRoot, { force: true, recursive: true });
       await rm(artifactRoot, { force: true, recursive: true });
     }
   });

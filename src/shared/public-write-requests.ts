@@ -114,6 +114,21 @@ export async function markPublicWriteRequestAccepted(
   return request;
 }
 
+export async function markPublicWriteRequestPending(
+  queryable: Queryable,
+  requestId: string,
+  outcomeDetail: string,
+): Promise<PublicWriteRequestView> {
+  await queryable.query(
+    `UPDATE public_write_requests SET status = 'pending', outcome_detail = $2, updated_at = NOW()
+     WHERE request_id = $1`,
+    [requestId, outcomeDetail.slice(0, 2000)],
+  );
+  const request = await readPublicWriteRequest(queryable, requestId);
+  if (!request) throw new Error("public_write_request_not_found_after_pending_update");
+  return request;
+}
+
 export async function markPublicWriteRequestRejected(
   queryable: Queryable,
   requestId: string,

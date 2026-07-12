@@ -76,9 +76,25 @@ export type ForecastView = {
   settled: boolean;
   direction: number;
   confidenceBps: number;
+  resolutionDecisionId: string | null;
   finalStatus: number | null;
   matched: boolean | null;
   payoutAmount: string | null;
+};
+
+export type ResolutionDecisionView = {
+  decisionId: string;
+  claimId: string;
+  replicationId: string;
+  resolutionModule: string;
+  status: number;
+  claimStatus: number;
+  confidenceBps: number;
+  resolutionHash: string;
+  evidenceHash: string;
+  resolverType: number;
+  createdAt: string;
+  actor: string;
 };
 
 export type ChallengeView = {

@@ -80,6 +80,18 @@ paths:
           content:
             application/json:
               schema: { type: object }
+    post:
+      tags: [writes]
+      summary: Create a claim draft (signed public write)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignedWriteRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+        "401": { description: Signature or envelope rejected. }
+        "405": { description: Gateway is running in read-only mode. }
   /claims/{claimId}:
     get:
       tags: [claims]
@@ -93,6 +105,27 @@ paths:
       responses:
         "200": { $ref: "#/components/responses/JsonObject" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /claims/{claimId}/publish:
+    post:
+      tags: [writes]
+      summary: Publish a bonded claim draft (signed author write)
+      description: |
+        The author signs a `claim_publish` envelope scoped to `claim:<claimId>` after depositing
+        the complete declared bond directly into BondEscrow. The gateway verifies authorship and
+        the onchain bond before submitting the Draft-to-Published transition.
+      parameters:
+        - { name: claimId, in: path, required: true, schema: { type: integer, minimum: 1 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignedWriteRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/JsonObject" }
+        "401": { description: Signature or envelope rejected. }
+        "403": { description: Signing wallet is not the claim author. }
+        "409": { description: Claim is not a draft or its author bond is incomplete. }
+        "405": { description: Gateway is running in read-only mode. }
   /feeds/claims:
     get:
       tags: [claims]
@@ -262,8 +295,30 @@ components:
       required: [envelope, signature]
       properties:
         envelope:
-          type: object
-          description: Typed public-write envelope (action, payload, timestamp, nonce).
+          $ref: "#/components/schemas/PublicWriteEnvelope"
         signature:
           type: string
           description: EIP-191 signature of the envelope hash by the submitting wallet.
+    PublicWriteEnvelope:
+      type: object
+      required: [actionType, actorAddress, chainId, issuedAt, payload, requestNonce, scopeKey]
+      properties:
+        actionType:
+          type: string
+          enum:
+            - claim_create
+            - claim_publish
+            - claim_draft_from_artifact
+            - domain_recompute
+            - replication_job_open
+            - replication_job_process
+            - replication_job_resolve
+            - source_submit
+            - source_publication_confirm
+            - source_publication_reject
+        actorAddress: { type: string, pattern: "^0x[a-fA-F0-9]{40}$" }
+        chainId: { type: integer, minimum: 1 }
+        issuedAt: { type: string, format: date-time }
+        payload: { type: object }
+        requestNonce: { type: string, minLength: 1 }
+        scopeKey: { type: string, minLength: 1 }

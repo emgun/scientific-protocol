@@ -38,6 +38,8 @@ export async function handleClaimWriteRoutes(context: RouteContext): Promise<boo
       actionType: "claim_create",
       chainId: writeConfig.chainId,
     });
+    let accepted = false;
+    let draftCheckpoint: string | null = null;
     try {
       const payload = authenticated.envelope.payload;
       const result = await dependencies.createProductionClaim(
@@ -58,13 +60,24 @@ export async function handleClaimWriteRoutes(context: RouteContext): Promise<boo
         },
         authenticated.envelope.actorAddress,
         pool,
-        { env },
+        {
+          env,
+          onClaimDraftCreated: async ({ claimId, createClaimTxHash }) => {
+            draftCheckpoint = `claim:${claimId}:draft:createTx:${createClaimTxHash}`;
+            await dependencies.markPublicWriteRequestPending(
+              pool,
+              authenticated.acceptedRequestId,
+              draftCheckpoint,
+            );
+          },
+        },
       );
       await dependencies.markPublicWriteRequestAccepted(
         pool,
         authenticated.acceptedRequestId,
         `claim:${result.claimId}`,
       );
+      accepted = true;
       const synced = await dependencies.syncReadModel(deploymentPath, readModelPath, databaseUrl, {
         env,
       });
@@ -78,11 +91,58 @@ export async function handleClaimWriteRoutes(context: RouteContext): Promise<boo
         },
       });
     } catch (error) {
-      await dependencies.markPublicWriteRequestRejected(
+      if (!accepted) {
+        await dependencies.markPublicWriteRequestRejected(
+          pool,
+          authenticated.acceptedRequestId,
+          [draftCheckpoint, error instanceof Error ? error.message : String(error)]
+            .filter(Boolean)
+            .join(":reconciliation_required:"),
+        );
+      }
+      throw error;
+    }
+    return true;
+  }
+  const claimPublishMatch = url.pathname.match(/^\/claims\/(\d+)\/publish$/);
+  if (claimPublishMatch && request.method === "POST") {
+    const claimId = claimPublishMatch[1];
+    const writeConfig = await buildWriteProtocolConfigPayload(deploymentPath, env);
+    const authenticated = await authenticateSignedPublicWriteRequest(dependencies, pool, request, {
+      actionType: "claim_publish",
+      chainId: writeConfig.chainId,
+      scopeKey: `claim:${claimId}`,
+    });
+    let accepted = false;
+    try {
+      const result = await dependencies.publishProductionClaim(
+        claimId,
+        authenticated.envelope.actorAddress,
+        env,
+      );
+      await dependencies.markPublicWriteRequestAccepted(
         pool,
         authenticated.acceptedRequestId,
-        error instanceof Error ? error.message : String(error),
+        `claim:${claimId}:published`,
       );
+      accepted = true;
+      const synced = await dependencies.syncReadModel(deploymentPath, readModelPath, databaseUrl, {
+        env,
+      });
+      json(response, 200, {
+        ok: true,
+        requestId: authenticated.acceptedRequestId,
+        result,
+        synced: { indexedAt: synced.metadata.indexedAt, latestBlock: synced.metadata.latestBlock },
+      });
+    } catch (error) {
+      if (!accepted) {
+        await dependencies.markPublicWriteRequestRejected(
+          pool,
+          authenticated.acceptedRequestId,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
       throw error;
     }
     return true;

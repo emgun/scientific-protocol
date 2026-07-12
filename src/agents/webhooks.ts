@@ -2,7 +2,8 @@ import { createHmac, randomBytes } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { createReadModelPool, DEFAULT_DATABASE_URL, migrateReadModelDb } from "../indexer/store.js";
 import type { ScientificProtocolClient } from "../sdk/client.js";
-import { normalizePagination } from "../shared/pagination.js";
+import { fetchBoundedOutbound } from "../shared/outbound-request.js";
+import { normalizePagination, readAllPages } from "../shared/pagination.js";
 import { AGENT_RUNTIME_EVENT_TYPES, type AgentRuntimeEventView } from "./runtime-events.js";
 
 type Queryable = Pool | PoolClient;
@@ -813,14 +814,12 @@ export async function syncAgentWebhookSubscriptionsFromRuntimeFeed(input: {
   subscriptionsScanned: number;
   subscriptionsUpdated: number;
 }> {
-  const subscriptions = await readAgentWebhookSubscriptionsPage(input.pool, {
-    limit: 1000,
-    offset: 0,
-    status: "active",
-  });
+  const subscriptions = await readAllPages((pagination) =>
+    readAgentWebhookSubscriptionsPage(input.pool, { ...pagination, status: "active" }),
+  );
   let enqueuedDeliveries = 0;
   let subscriptionsUpdated = 0;
-  for (const subscription of subscriptions.items) {
+  for (const subscription of subscriptions) {
     const freshEvents = await collectAgentRuntimeEventsForSubscription({
       client: input.client,
       pageLimit: Math.max(1, Math.min(input.pageLimit ?? 100, 500)),
@@ -861,7 +860,7 @@ export async function syncAgentWebhookSubscriptionsFromRuntimeFeed(input: {
   }
   return {
     enqueuedDeliveries,
-    subscriptionsScanned: subscriptions.items.length,
+    subscriptionsScanned: subscriptions.length,
     subscriptionsUpdated,
   };
 }
@@ -912,23 +911,36 @@ export async function dispatchAgentWebhookDeliveryAttempt(input: {
     secret: input.subscription.signingSecret,
     timestamp,
   });
-  const response = await fetchImpl(input.subscription.targetUrl, {
-    body: payloadBody,
-    headers: {
-      "content-type": "application/json",
-      "user-agent": "scientific-protocol-webhooks/1.0",
-      "x-sp-webhook-delivery-id": input.delivery.deliveryId,
-      "x-sp-webhook-event-id": input.delivery.eventId,
-      "x-sp-webhook-event-type": input.delivery.eventType,
-      "x-sp-webhook-signature": signature,
-      "x-sp-webhook-subscription-id": input.subscription.subscriptionId,
-      "x-sp-webhook-timestamp": timestamp,
+  const response = await fetchBoundedOutbound(
+    input.subscription.targetUrl,
+    {
+      body: payloadBody,
+      headers: {
+        "content-type": "application/json",
+        "user-agent": "scientific-protocol-webhooks/1.0",
+        "x-sp-webhook-delivery-id": input.delivery.deliveryId,
+        "x-sp-webhook-event-id": input.delivery.eventId,
+        "x-sp-webhook-event-type": input.delivery.eventType,
+        "x-sp-webhook-signature": signature,
+        "x-sp-webhook-subscription-id": input.subscription.subscriptionId,
+        "x-sp-webhook-timestamp": timestamp,
+      },
+      method: "POST",
     },
-    method: "POST",
-  });
-  const responseBody = trimResponseBody(await response.text());
+    {
+      fetchImpl,
+      // Injected fetches are test adapters. The production fetch path always
+      // performs DNS resolution and blocks private/special destinations.
+      dnsLookup:
+        fetchImpl === fetch ? undefined : async () => [{ address: "93.184.216.34", family: 4 }],
+      maxBytes: 64 * 1024,
+      maxRedirects: 0,
+      timeoutMs: 10_000,
+    },
+  );
+  const responseBody = trimResponseBody(response.body.toString("utf8"));
   return {
-    delivered: response.ok,
+    delivered: response.status >= 200 && response.status < 300,
     payloadBody,
     responseBody,
     responseStatus: response.status,

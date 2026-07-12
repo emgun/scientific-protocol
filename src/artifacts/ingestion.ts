@@ -1,12 +1,7 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { createWriteStream } from "node:fs";
-import { access, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
-import type { ReadableStream as NodeWebReadableStream } from "node:stream/web";
-import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { keccak256, toUtf8Bytes } from "ethers";
 import type { Pool } from "pg";
@@ -17,6 +12,13 @@ import { isIpfsUrl, parseIpfsUrl } from "../shared/ipfs.js";
 import { resolveOptionalIntegerInput } from "../shared/numbers.js";
 import { createManagedOperatorSigner } from "../shared/operator.js";
 import {
+  assertSafeOutboundUrl,
+  DEFAULT_OUTBOUND_MAX_BYTES,
+  DEFAULT_OUTBOUND_TIMEOUT_MS,
+  fetchBoundedOutbound,
+  UnsafeOutboundDestinationError,
+} from "../shared/outbound-request.js";
+import {
   type ArtifactPersistenceOptions,
   type PersistedArtifactRecord,
   persistBinaryArtifact,
@@ -26,6 +28,14 @@ import {
 } from "../shared/persisted-artifacts.js";
 
 const execFile = promisify(execFileCallback);
+const MAX_REPOSITORY_ARCHIVE_BYTES = 64 * 1024 * 1024;
+
+function allowPrivateCanaryNetwork(options: ArtifactPersistenceOptions): boolean {
+  return (
+    options.env?.SP_REFERENCE_CANARY_MODE === "true" &&
+    options.env.SP_OUTBOUND_ALLOW_PRIVATE_NETWORKS === "true"
+  );
+}
 
 const README_CANDIDATES = [
   "README.md",
@@ -285,17 +295,6 @@ function inferExtensionFromUrl(rawUrl: string): string | null {
   return basename.split(".").pop() ?? null;
 }
 
-function inferLocalPathExtension(localPath: string): string | null {
-  const basename = path.basename(localPath);
-  if (!basename.includes(".")) {
-    return null;
-  }
-  if (basename.endsWith(".tar.gz")) {
-    return "tar.gz";
-  }
-  return basename.split(".").pop() ?? null;
-}
-
 function defaultArtifactType(sourceType: "repository" | "url", extension: string): number {
   if (sourceType === "repository") {
     return 1;
@@ -465,33 +464,6 @@ function buildExtractionPreview(
   };
 }
 
-async function maybeReadLocalFile(rawLocator: string): Promise<{
-  bytes: Buffer;
-  contentType: string;
-  extension: string;
-  locator: string;
-} | null> {
-  const localPath = rawLocator.startsWith("file://")
-    ? fileURLToPath(rawLocator)
-    : path.resolve(rawLocator);
-  try {
-    const localStats = await stat(localPath);
-    if (!localStats.isFile()) {
-      return null;
-    }
-  } catch {
-    return null;
-  }
-
-  const extension = inferLocalPathExtension(localPath) ?? "bin";
-  return {
-    bytes: await readFile(localPath),
-    contentType: inferContentTypeFromExtension(extension),
-    extension,
-    locator: localPath,
-  };
-}
-
 async function extractTextFromBytes(
   bytes: Buffer,
   contentType: string,
@@ -586,127 +558,85 @@ async function snapshotUrlSource(
   const configuredArtifactType = resolveOptionalIntegerInput(input.artifactType, "artifactType", {
     min: 1,
   });
-  const localFile = await maybeReadLocalFile(input.sourceUrl);
   let bytes: Buffer;
   let contentType: string;
   let extension: string;
   let cid: string | null = null;
   let finalUrl: string | null = null;
-  let sourceLocator = input.sourceUrl;
-  let stagedFilePath: string | null = null;
-  let stagedTempRoot: string | null = null;
-
-  try {
-    if (isIpfsUrl(input.sourceUrl)) {
-      bytes = await readPersistedArtifactBytes(
-        {
-          storagePath: input.sourceUrl,
-        },
-        persistenceOptions,
-      );
-      extension = inferExtensionFromUrl(input.sourceUrl) ?? "bin";
-      contentType = inferContentTypeFromExtension(extension);
-      cid = parseIpfsUrl(input.sourceUrl).cid;
-    } else if (localFile) {
-      bytes = localFile.bytes;
-      contentType = localFile.contentType;
-      extension = localFile.extension;
-      sourceLocator = localFile.locator;
-      stagedFilePath = localFile.locator;
-    } else {
-      const response = await fetch(input.sourceUrl);
-      if (!response.ok) {
-        throw new Error(`artifact source fetch failed with status ${response.status}`);
-      }
-      contentType =
-        response.headers.get("content-type") ??
-        inferContentTypeFromExtension(inferExtensionFromUrl(input.sourceUrl) ?? "bin");
-      extension =
-        inferExtensionFromUrl(response.url || input.sourceUrl) ??
-        extensionFromContentType(contentType);
-      finalUrl = response.url || input.sourceUrl;
-      stagedTempRoot = await mkdtemp(path.join(os.tmpdir(), "sp-artifact-fetch-"));
-      stagedFilePath = path.join(
-        stagedTempRoot,
-        `source.${normalizeNonEmpty(extension, "bin").replace(/\//g, "-")}`,
-      );
-      if (response.body) {
-        await pipeline(
-          Readable.fromWeb(response.body as unknown as NodeWebReadableStream<Uint8Array>),
-          createWriteStream(stagedFilePath),
-        );
-      } else {
-        await writeFile(stagedFilePath, Buffer.from(await response.arrayBuffer()));
-      }
-      bytes = await readFile(stagedFilePath);
-    }
-
-    const persistedSnapshotArtifact = stagedFilePath
-      ? await persistFileArtifact(
-          "artifact-source-snapshot",
-          stagedFilePath,
-          {
-            contentType,
-            extension,
-          },
-          persistenceOptions,
-        )
-      : await persistBinaryArtifact(
-          "artifact-source-snapshot",
-          bytes,
-          {
-            contentType,
-            extension,
-          },
-          persistenceOptions,
-        );
-    const snapshotArtifact = {
-      ...persistedSnapshotArtifact,
-      provenance: {
-        cid: cid ?? null,
-        finalUrl: finalUrl ?? null,
-        metadata: {
-          artifactType: configuredArtifactType ?? defaultArtifactType("url", extension),
-          contentType,
-          extension,
-        },
-        ref: null,
-        sourceLocator,
-        sourceType: isIpfsUrl(input.sourceUrl) ? "ipfs" : "url",
+  const sourceLocator = input.sourceUrl;
+  if (isIpfsUrl(input.sourceUrl)) {
+    bytes = await readPersistedArtifactBytes(
+      {
+        storagePath: input.sourceUrl,
       },
-    };
+      persistenceOptions,
+    );
+    extension = inferExtensionFromUrl(input.sourceUrl) ?? "bin";
+    contentType = inferContentTypeFromExtension(extension);
+    cid = parseIpfsUrl(input.sourceUrl).cid;
+  } else {
+    const response = await fetchBoundedOutbound(
+      input.sourceUrl,
+      {},
+      {
+        allowPrivateNetworks: allowPrivateCanaryNetwork(persistenceOptions),
+        maxBytes: DEFAULT_OUTBOUND_MAX_BYTES,
+        timeoutMs: DEFAULT_OUTBOUND_TIMEOUT_MS,
+      },
+    );
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`artifact source fetch failed with status ${response.status}`);
+    }
+    contentType =
+      response.headers.get("content-type") ??
+      inferContentTypeFromExtension(inferExtensionFromUrl(input.sourceUrl) ?? "bin");
+    extension = inferExtensionFromUrl(response.finalUrl) ?? extensionFromContentType(contentType);
+    finalUrl = response.finalUrl;
+    bytes = response.body;
+  }
 
-    const extracted = await extractTextFromBytes(bytes, contentType, extension);
-
-    return {
-      artifactType: configuredArtifactType ?? defaultArtifactType("url", extension),
+  const persistedSnapshotArtifact = await persistBinaryArtifact(
+    "artifact-source-snapshot",
+    bytes,
+    {
       contentType,
       extension,
-      snapshotArtifact,
-      sourceLocator,
-      sourceText: extracted.sourceText,
-      sourceType: "url",
-      titleHint: extracted.titleHint ?? null,
-      version: {
-        cid,
-        finalUrl,
-        ref: null,
+    },
+    persistenceOptions,
+  );
+  const snapshotArtifact = {
+    ...persistedSnapshotArtifact,
+    provenance: {
+      cid: cid ?? null,
+      finalUrl: finalUrl ?? null,
+      metadata: {
+        artifactType: configuredArtifactType ?? defaultArtifactType("url", extension),
+        contentType,
+        extension,
       },
-    };
-  } finally {
-    if (stagedTempRoot) {
-      await rm(stagedTempRoot, { force: true, recursive: true });
-    }
-  }
-}
+      ref: null,
+      sourceLocator,
+      sourceType: isIpfsUrl(input.sourceUrl) ? "ipfs" : "url",
+    },
+  };
 
-async function pathExists(candidatePath: string): Promise<boolean> {
-  try {
-    await access(candidatePath);
-    return true;
-  } catch {
-    return false;
-  }
+  const extracted = await extractTextFromBytes(bytes, contentType, extension);
+
+  return {
+    artifactType: configuredArtifactType ?? defaultArtifactType("url", extension),
+    contentType,
+    extension,
+    snapshotArtifact,
+    sourceLocator,
+    sourceText: extracted.sourceText,
+    sourceType: "url",
+    titleHint: extracted.titleHint ?? null,
+    version: {
+      cid,
+      finalUrl,
+      ref: null,
+    },
+  };
 }
 
 async function runGit(
@@ -719,6 +649,7 @@ async function runGit(
   return execFile("git", args, {
     cwd,
     maxBuffer: 16 * 1024 * 1024,
+    timeout: DEFAULT_OUTBOUND_TIMEOUT_MS,
   });
 }
 
@@ -765,33 +696,45 @@ async function snapshotRepositorySource(
   }
   const artifactType =
     resolveOptionalIntegerInput(input.artifactType, "artifactType", { min: 1 }) ?? 1;
-  const maybeLocalPath = input.repositoryUrl.startsWith("file://")
-    ? fileURLToPath(input.repositoryUrl)
-    : path.resolve(input.repositoryUrl);
-  const localRepo = (await pathExists(path.join(maybeLocalPath, ".git"))) ? maybeLocalPath : null;
-  const tempRoot = localRepo ? null : await mkdtemp(path.join(os.tmpdir(), "sp-repo-ingest-"));
-  const workspaceRoot = tempRoot ?? localRepo;
-  if (!workspaceRoot) {
-    throw new Error("failed to allocate repository snapshot workspace");
+  const allowPrivateNetworks = allowPrivateCanaryNetwork(persistenceOptions);
+  const repositoryUrl = await assertSafeOutboundUrl(input.repositoryUrl, { allowPrivateNetworks });
+  if (repositoryUrl.protocol !== "https:" && !allowPrivateNetworks) {
+    throw new UnsafeOutboundDestinationError("repository destination must use https");
   }
-  const repoPath = localRepo ?? path.join(workspaceRoot, "repo");
+  if (input.ref && !/^[A-Za-z0-9._/-]{1,200}$/u.test(input.ref)) {
+    throw new Error("repository ref contains unsupported characters");
+  }
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "sp-repo-ingest-"));
+  const repoPath = path.join(tempRoot, "repo");
 
   try {
-    if (!localRepo) {
-      const cloneArgs = ["clone", "--quiet", "--depth", "1"];
-      if (input.ref?.trim()) {
-        cloneArgs.push("--branch", input.ref.trim());
-      }
-      cloneArgs.push(input.repositoryUrl, repoPath);
-      await runGit(cloneArgs);
+    const cloneArgs = [
+      "-c",
+      "http.followRedirects=false",
+      "clone",
+      "--quiet",
+      "--depth",
+      "1",
+      "--no-tags",
+      "--single-branch",
+      "--filter=blob:limit=1048576",
+    ];
+    if (input.ref?.trim()) {
+      cloneArgs.push("--branch", input.ref.trim());
     }
+    cloneArgs.push("--", repositoryUrl.toString(), repoPath);
+    await runGit(cloneArgs);
 
     const resolvedRef = normalizeNonEmpty(input.ref, "HEAD");
     const commitHash = normalizeWhitespace(
       (await runGit(["rev-parse", resolvedRef], repoPath)).stdout,
     );
-    const archivePath = path.join(tempRoot ?? repoPath, "snapshot.tar.gz");
+    const archivePath = path.join(tempRoot, "snapshot.tar.gz");
     await runGit(["archive", "--format=tar.gz", `--output=${archivePath}`, commitHash], repoPath);
+    const archiveStats = await stat(archivePath);
+    if (archiveStats.size > MAX_REPOSITORY_ARCHIVE_BYTES) {
+      throw new Error(`repository snapshot exceeded ${MAX_REPOSITORY_ARCHIVE_BYTES} bytes`);
+    }
     const readme = await extractRepositoryReadme(repoPath, commitHash);
     const repoName =
       path.basename(input.repositoryUrl.replace(/\/+$/, "")).replace(/\.git$/i, "") ||
@@ -836,9 +779,7 @@ async function snapshotRepositorySource(
       },
     };
   } finally {
-    if (tempRoot) {
-      await rm(tempRoot, { force: true, recursive: true });
-    }
+    await rm(tempRoot, { force: true, recursive: true });
   }
 }
 

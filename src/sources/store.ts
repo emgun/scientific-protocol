@@ -41,6 +41,149 @@ type SourceSubmissionRecordRow = {
   submittedByAgentId: string | null;
 };
 
+type SourceIngestionAttemptRow = {
+  attemptCount: number;
+  canonicalSourceKey: string;
+  lastError: string | null;
+  leaseExpiresAt: Date | null;
+  leaseOwner: string | null;
+  sourceId: string | null;
+  status: string;
+};
+
+export type SourceIngestionAttemptView = {
+  attemptCount: number;
+  canonicalSourceKey: string;
+  lastError: string | null;
+  leaseExpiresAt: string | null;
+  leaseOwner: string | null;
+  sourceId: string | null;
+  status: "completed" | "failed" | "ingesting";
+};
+
+function mapSourceIngestionAttemptRow(row: SourceIngestionAttemptRow): SourceIngestionAttemptView {
+  return {
+    attemptCount: row.attemptCount,
+    canonicalSourceKey: row.canonicalSourceKey,
+    lastError: row.lastError,
+    leaseExpiresAt: row.leaseExpiresAt?.toISOString() ?? null,
+    leaseOwner: row.leaseOwner,
+    sourceId: row.sourceId,
+    status: row.status as SourceIngestionAttemptView["status"],
+  };
+}
+
+export async function readSourceIngestionAttempt(
+  queryable: Queryable,
+  canonicalSourceKey: string,
+): Promise<SourceIngestionAttemptView | undefined> {
+  const result = await queryable.query<SourceIngestionAttemptRow>(
+    `
+      SELECT
+        canonical_source_key AS "canonicalSourceKey",
+        status,
+        lease_owner AS "leaseOwner",
+        lease_expires_at AS "leaseExpiresAt",
+        attempt_count AS "attemptCount",
+        source_id::text AS "sourceId",
+        last_error AS "lastError"
+      FROM source_ingestion_attempts
+      WHERE canonical_source_key = $1
+    `,
+    [canonicalSourceKey],
+  );
+  const row = result.rows[0];
+  return row ? mapSourceIngestionAttemptRow(row) : undefined;
+}
+
+export async function reserveSourceIngestionAttempt(
+  queryable: Queryable,
+  input: {
+    canonicalSourceKey: string;
+    leaseMs: number;
+    leaseOwner: string;
+    normalizedLocator: string;
+    rawLocator: string;
+    sourceType: SourceRecordView["sourceType"];
+  },
+): Promise<{ acquired: boolean; attempt: SourceIngestionAttemptView }> {
+  const result = await queryable.query<SourceIngestionAttemptRow>(
+    `
+      INSERT INTO source_ingestion_attempts (
+        canonical_source_key,
+        source_type,
+        raw_locator,
+        normalized_locator,
+        status,
+        lease_owner,
+        lease_expires_at
+      ) VALUES ($1, $2, $3, $4, 'ingesting', $5, NOW() + ($6::text || ' milliseconds')::interval)
+      ON CONFLICT (canonical_source_key) DO UPDATE SET
+        status = 'ingesting',
+        lease_owner = EXCLUDED.lease_owner,
+        lease_expires_at = EXCLUDED.lease_expires_at,
+        attempt_count = source_ingestion_attempts.attempt_count + 1,
+        last_error = NULL,
+        updated_at = NOW()
+      WHERE source_ingestion_attempts.status = 'failed'
+         OR source_ingestion_attempts.lease_expires_at <= NOW()
+      RETURNING
+        canonical_source_key AS "canonicalSourceKey",
+        status,
+        lease_owner AS "leaseOwner",
+        lease_expires_at AS "leaseExpiresAt",
+        attempt_count AS "attemptCount",
+        source_id::text AS "sourceId",
+        last_error AS "lastError"
+    `,
+    [
+      input.canonicalSourceKey,
+      input.sourceType,
+      input.rawLocator,
+      input.normalizedLocator,
+      input.leaseOwner,
+      input.leaseMs,
+    ],
+  );
+  const acquiredRow = result.rows[0];
+  const attempt = acquiredRow
+    ? mapSourceIngestionAttemptRow(acquiredRow)
+    : await readSourceIngestionAttempt(queryable, input.canonicalSourceKey);
+  if (!attempt) throw new Error("source_ingestion_attempt_reservation_failed");
+  return { acquired: Boolean(acquiredRow), attempt };
+}
+
+export async function completeSourceIngestionAttempt(
+  queryable: Queryable,
+  input: { canonicalSourceKey: string; leaseOwner: string; sourceId: string },
+): Promise<boolean> {
+  const result = await queryable.query(
+    `
+      UPDATE source_ingestion_attempts
+      SET status = 'completed', source_id = $3, lease_owner = NULL,
+          lease_expires_at = NULL, last_error = NULL, updated_at = NOW()
+      WHERE canonical_source_key = $1 AND lease_owner = $2 AND status = 'ingesting'
+    `,
+    [input.canonicalSourceKey, input.leaseOwner, input.sourceId],
+  );
+  return result.rowCount === 1;
+}
+
+export async function failSourceIngestionAttempt(
+  queryable: Queryable,
+  input: { canonicalSourceKey: string; lastError: string; leaseOwner: string },
+): Promise<void> {
+  await queryable.query(
+    `
+      UPDATE source_ingestion_attempts
+      SET status = 'failed', lease_owner = NULL, lease_expires_at = NULL,
+          last_error = $3, updated_at = NOW()
+      WHERE canonical_source_key = $1 AND lease_owner = $2 AND status = 'ingesting'
+    `,
+    [input.canonicalSourceKey, input.leaseOwner, input.lastError.slice(0, 2000)],
+  );
+}
+
 type SourceExtractionCandidateRow = {
   anchors: Array<{ label?: string; text?: string }> | null;
   candidateId: string;

@@ -10,6 +10,7 @@ import {
   readReplicationsByClaim,
 } from "../indexer/store.js";
 import { readOptionalTrimmedEnv } from "../shared/cli.js";
+import { readAllPages } from "../shared/pagination.js";
 import { persistJsonArtifact } from "../shared/persisted-artifacts.js";
 import { buildClaimReviewState } from "./aggregation.js";
 import { evaluateReviewTask } from "./evaluate.js";
@@ -42,6 +43,7 @@ async function buildTaskInputs(pool: Pool, task: ReviewTaskView) {
   if (!task.claimId) {
     throw new Error("source_backed_review_tasks_not_supported_by_worker");
   }
+  const claimId = task.claimId;
   const [
     claim,
     artifacts,
@@ -55,17 +57,17 @@ async function buildTaskInputs(pool: Pool, task: ReviewTaskView) {
     responsesPage,
     claimsPage,
   ] = await Promise.all([
-    readClaim(pool, task.claimId),
-    readArtifactsByClaim(pool, task.claimId),
-    readReplicationsByClaim(pool, task.claimId),
-    readForecastsByClaim(pool, task.claimId),
-    readChallengesByClaim(pool, task.claimId),
-    readReviewTasksPage(pool, { claimId: task.claimId, limit: 100, offset: 0 }),
-    readReviewSubmissionsPage(pool, { claimId: task.claimId, limit: 200, offset: 0 }),
-    readReviewSubmissionsPage(pool, { limit: 1000, offset: 0 }),
-    readReviewIssuesPage(pool, { claimId: task.claimId, limit: 200, offset: 0 }),
-    readReviewAuthorResponsesPage(pool, { claimId: task.claimId, limit: 100, offset: 0 }),
-    readClaimsPage(pool, { limit: 1000, offset: 0 }),
+    readClaim(pool, claimId),
+    readArtifactsByClaim(pool, claimId),
+    readReplicationsByClaim(pool, claimId),
+    readForecastsByClaim(pool, claimId),
+    readChallengesByClaim(pool, claimId),
+    readAllPages((pagination) => readReviewTasksPage(pool, { ...pagination, claimId })),
+    readAllPages((pagination) => readReviewSubmissionsPage(pool, { ...pagination, claimId })),
+    readAllPages((pagination) => readReviewSubmissionsPage(pool, pagination)),
+    readAllPages((pagination) => readReviewIssuesPage(pool, { ...pagination, claimId })),
+    readAllPages((pagination) => readReviewAuthorResponsesPage(pool, { ...pagination, claimId })),
+    readAllPages((pagination) => readClaimsPage(pool, pagination)),
   ]);
 
   if (!claim) {
@@ -75,15 +77,15 @@ async function buildTaskInputs(pool: Pool, task: ReviewTaskView) {
   const reviewState = buildClaimReviewState({
     artifacts,
     challenges,
-    claims: claimsPage.items,
-    currentClaimId: task.claimId,
+    claims: claimsPage,
+    currentClaimId: claimId,
     forecasts,
-    issues: issuesPage.items,
+    issues: issuesPage,
     replications,
-    responses: responsesPage.items,
-    submissionHistory: submissionHistoryPage.items,
-    submissions: submissionsPage.items,
-    tasks: tasksPage.items,
+    responses: responsesPage,
+    submissionHistory: submissionHistoryPage,
+    submissions: submissionsPage,
+    tasks: tasksPage,
   });
   return {
     artifactTypes: artifacts.map((artifact) => Number(artifact.artifactType)),

@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import {
   type ArtifactDraftInput,
@@ -10,9 +10,13 @@ import { createReviewTask } from "../review/store.js";
 import { readPersistedArtifactContent } from "../shared/persisted-artifacts.js";
 import { canonicalizeSourceLocator } from "./canonicalize.js";
 import {
+  completeSourceIngestionAttempt,
+  failSourceIngestionAttempt,
   insertSourceSubmissionRecord,
   readSourceByCanonicalKey,
+  readSourceIngestionAttempt,
   readSourceRecord,
+  reserveSourceIngestionAttempt,
   upsertSourceRecord,
 } from "./store.js";
 import type {
@@ -31,10 +35,18 @@ export type SourceIngestionResult = ArtifactIngestionResult & {
 export type SourceIngestOptions = {
   artifactIngestor?: typeof ingestArtifactSource;
   discoveryMode?: SourceRecordView["discoveryMode"];
+  ingestionLeaseMs?: number;
+  ingestionWaitMs?: number;
+  ingestionWaitPollMs?: number;
+  leaseOwner?: string;
   openSourceExtractionTasks?: typeof openSourceExtractionTasks;
   submittedByActor?: string | null;
   submittedByAgentId?: string | null;
 };
+
+const DEFAULT_INGESTION_LEASE_MS = 30_000;
+const DEFAULT_INGESTION_WAIT_MS = 25_000;
+const DEFAULT_INGESTION_WAIT_POLL_MS = 50;
 
 type SourceQueryable = Pool | PoolClient;
 
@@ -78,6 +90,29 @@ function sourceLocatorForInput(input: ArtifactDraftInput): { locator: string; re
 function sourceSubmissionLockKey(canonicalSourceKey: string): string {
   const digest = createHash("sha256").update(`source-submission:${canonicalSourceKey}`).digest();
   return BigInt.asIntN(64, digest.readBigInt64BE(0)).toString();
+}
+
+async function waitForSourceIngestion(
+  pool: Pool,
+  canonicalSourceKey: string,
+  waitMs: number,
+  pollMs: number,
+): Promise<SourceRecordView | null> {
+  const deadline = Date.now() + waitMs;
+  while (Date.now() < deadline) {
+    const source = await readSourceByCanonicalKey(pool, canonicalSourceKey);
+    if (source) return source;
+    const attempt = await readSourceIngestionAttempt(pool, canonicalSourceKey);
+    if (
+      !attempt ||
+      attempt.status === "failed" ||
+      (attempt.leaseExpiresAt && Date.parse(attempt.leaseExpiresAt) <= Date.now())
+    ) {
+      return null;
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, pollMs));
+  }
+  throw new Error("source_ingestion_in_progress");
 }
 
 async function withSourceSubmissionLock<T>(
@@ -190,6 +225,55 @@ export async function ingestSource(
     ref,
     sourceType: input.sourceType as SourceType,
   });
+  const leaseOwner = options.leaseOwner ?? randomUUID();
+  const leaseMs = options.ingestionLeaseMs ?? DEFAULT_INGESTION_LEASE_MS;
+  const waitMs = options.ingestionWaitMs ?? DEFAULT_INGESTION_WAIT_MS;
+  const waitPollMs = options.ingestionWaitPollMs ?? DEFAULT_INGESTION_WAIT_POLL_MS;
+  let acquired = false;
+  for (let reservationPass = 0; reservationPass < 3; reservationPass += 1) {
+    const existing = await readSourceByCanonicalKey(pool, canonical.canonicalSourceKey);
+    if (existing) {
+      return replayDuplicateSourceSubmission(pool, input, canonical, existing, options);
+    }
+    const reservation = await reserveSourceIngestionAttempt(pool, {
+      canonicalSourceKey: canonical.canonicalSourceKey,
+      leaseMs,
+      leaseOwner,
+      normalizedLocator: canonical.normalizedLocator,
+      rawLocator: locator,
+      sourceType: input.sourceType,
+    });
+    if (reservation.acquired) {
+      acquired = true;
+      break;
+    }
+    const completed = await waitForSourceIngestion(
+      pool,
+      canonical.canonicalSourceKey,
+      waitMs,
+      waitPollMs,
+    );
+    if (completed) {
+      return replayDuplicateSourceSubmission(pool, input, canonical, completed, options);
+    }
+  }
+  if (!acquired) throw new Error("source_ingestion_in_progress");
+
+  // Network, parsing, and artifact persistence run without a checked-out DB
+  // connection or transaction. The short transaction below performs the
+  // canonical-key compare-and-set. Concurrent callers may duplicate bounded,
+  // content-addressed work, but can publish only one source record.
+  let ingestion: ArtifactIngestionResult;
+  try {
+    ingestion = await (options.artifactIngestor ?? ingestArtifactSource)(input);
+  } catch (error) {
+    await failSourceIngestionAttempt(pool, {
+      canonicalSourceKey: canonical.canonicalSourceKey,
+      lastError: error instanceof Error ? error.message : String(error),
+      leaseOwner,
+    });
+    throw error;
+  }
   const txResult = await withSourceSubmissionLock<SourceIngestionTxResult>(
     pool,
     canonical.canonicalSourceKey,
@@ -208,7 +292,6 @@ export async function ingestSource(
         };
       }
 
-      const ingestion = await (options.artifactIngestor ?? ingestArtifactSource)(input);
       const snapshotArtifact = await upsertPersistedArtifact(queryable, ingestion.snapshotArtifact);
       const extractionArtifact = await upsertPersistedArtifact(
         queryable,
@@ -243,6 +326,12 @@ export async function ingestSource(
         submittedByActor: options.submittedByActor ?? null,
         submittedByAgentId: options.submittedByAgentId ?? null,
       });
+      const completed = await completeSourceIngestionAttempt(queryable, {
+        canonicalSourceKey: canonical.canonicalSourceKey,
+        leaseOwner,
+        sourceId: source.sourceId,
+      });
+      if (!completed) throw new Error("source_ingestion_attempt_lease_lost");
 
       return {
         openTaskInput: {

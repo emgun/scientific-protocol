@@ -83,7 +83,8 @@
     "service:dev": "bash script/run-with-node22-env.sh node --import tsx src/service/cli.ts",
     "service:gateway": "npm run service:dev -- gateway",
     "service:migrate": "npm run service:dev -- migrate",
-    "service:sync": "npm run service:dev -- sync"
+    "service:sync": "npm run service:dev -- sync",
+    "indexer:rebuild:fresh": "bash script/run-with-node22-env.sh node --import tsx script/rebuild-read-model-fresh.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1011.0",

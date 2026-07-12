@@ -1,10 +1,6 @@
 import type { Pool } from "pg";
 import type { ArtifactDraftInput } from "../artifacts/ingestion.js";
-import {
-  createReplicationJob,
-  prepareCoordinatorStore,
-  type ReplicationJobView,
-} from "../coordinator/store.js";
+import { prepareCoordinatorStore, type ReplicationJobView } from "../coordinator/store.js";
 import { extractContractEventId, getContract } from "../shared/contracts.js";
 import { getDeploymentPath, loadDeploymentFile } from "../shared/deployment.js";
 import { keccakText } from "../shared/hash.js";
@@ -38,11 +34,11 @@ export type ProductionClaimResult = {
   claimId: string;
   job: ReplicationJobView | null;
   submittedBy: string;
+  publicationStatus: "awaiting_author_bond";
   txHashes: {
     addArtifact: string;
     createClaim: string;
-    depositAuthorBond: string | null;
-    publishClaim: string;
+    publishClaim?: string;
   };
 };
 
@@ -59,9 +55,13 @@ const DEFAULT_AUTHOR_BOND_ETH = "0.005";
 export async function createProductionClaim(
   input: ProductionClaimInput,
   authorAddress: string,
-  connection?: CoordinatorConnection,
+  _connection?: CoordinatorConnection,
   options: {
     env?: NodeJS.ProcessEnv;
+    onClaimDraftCreated?: (checkpoint: {
+      claimId: string;
+      createClaimTxHash: string;
+    }) => Promise<void>;
     onClaimReady?: (checkpoint: ProductionClaimReadyCheckpoint) => Promise<void>;
   } = {},
 ): Promise<ProductionClaimResult> {
@@ -83,41 +83,11 @@ export async function createProductionClaim(
     ["SP_CLAIM_SUBMITTER_PRIVATE_KEY", "SP_PROTOCOL_ADMIN_PRIVATE_KEY", "SP_OPERATOR_PRIVATE_KEY"],
     { env, localAccountIndex: 0 },
   );
-  const resolverSigner = createManagedOperatorSigner(
-    ["SP_RESOLVER_PRIVATE_KEY", "SP_PROTOCOL_ADMIN_PRIVATE_KEY", "SP_OPERATOR_PRIVATE_KEY"],
-    { env, localAccountIndex: 4 },
-  );
   const submittedBy = await submitterSigner.getAddress();
-  let bondSigner =
-    submittedBy.toLowerCase() === authorAddress.toLowerCase() ? submitterSigner : null;
-  if (authorBond > 0n && !bondSigner) {
-    try {
-      const authorSigner = createManagedOperatorSigner(
-        ["SP_CLAIM_AUTHOR_PRIVATE_KEY", "SP_OPERATOR_PRIVATE_KEY"],
-        { env, localAccountIndex: 1 },
-      );
-      if ((await authorSigner.getAddress()).toLowerCase() === authorAddress.toLowerCase()) {
-        bondSigner = authorSigner;
-      }
-    } catch (error) {
-      if (!(error instanceof Error) || !error.message.startsWith("missing operator private key")) {
-        throw error;
-      }
-    }
-  }
-  if (authorBond > 0n && !bondSigner) {
-    throw new Error("author_bond_signer_required");
-  }
-
-  const [claimRegistryAsSubmitter, claimRegistryAsResolver, artifactRegistry, bondEscrow] =
-    await Promise.all([
-      getContract("ClaimRegistry", deployment.addresses.claimRegistry, submitterSigner),
-      getContract("ClaimRegistry", deployment.addresses.claimRegistry, resolverSigner),
-      getContract("ArtifactRegistry", deployment.addresses.artifactRegistry, submitterSigner),
-      bondSigner
-        ? getContract("BondEscrow", deployment.addresses.bondEscrow, bondSigner)
-        : Promise.resolve(null),
-    ]);
+  const [claimRegistryAsSubmitter, artifactRegistry] = await Promise.all([
+    getContract("ClaimRegistry", deployment.addresses.claimRegistry, submitterSigner),
+    getContract("ArtifactRegistry", deployment.addresses.artifactRegistry, submitterSigner),
+  ]);
 
   const statement = resolveNonEmptyStringInput(input.statement, "Untitled claim");
   const methodology = resolveNonEmptyStringInput(input.methodology, "production-methodology");
@@ -148,6 +118,7 @@ export async function createProductionClaim(
   if (!claimId) {
     throw new Error(`claim transaction ${createReceipt.hash} did not emit ClaimCreated`);
   }
+  await options.onClaimDraftCreated?.({ claimId, createClaimTxHash: createReceipt.hash });
 
   const addArtifactTx = await artifactRegistry.addArtifact(
     BigInt(claimId),
@@ -164,48 +135,20 @@ export async function createProductionClaim(
     "artifactId",
   );
 
-  const depositReceipt =
-    authorBond > 0n && bondEscrow
-      ? await (await bondEscrow.depositAuthorBond(BigInt(claimId), { value: authorBond })).wait()
-      : null;
-  const publishTx = await claimRegistryAsResolver.setClaimStatus(BigInt(claimId), 1);
-  const publishReceipt = await publishTx.wait();
-
-  let job: ReplicationJobView | null = null;
-  if (input.openReplicationJob) {
-    const ownsPool = typeof connection === "string" || connection === undefined;
-    const pool = ownsPool ? await prepareCoordinatorStore(connection) : connection;
-    try {
-      job = await createReplicationJob(pool, {
-        claimId,
-        requestedBy: resolveNonEmptyStringInput(input.requestedBy, "production-submit"),
-        specHash: keccakText(
-          JSON.stringify({
-            artifactUri: input.artifactUri.trim(),
-            claimId,
-            domainId,
-            statement,
-          }),
-        ),
-      });
-    } finally {
-      if (ownsPool) {
-        await pool.end();
-      }
-    }
-  }
+  // Replication work cannot open until the author funds the declared bond and
+  // explicitly publishes through the second signed action.
+  const job: ReplicationJobView | null = null;
 
   const result = {
     artifactId,
     author: authorAddress,
     claimId,
     job,
+    publicationStatus: "awaiting_author_bond" as const,
     submittedBy,
     txHashes: {
       addArtifact: addArtifactReceipt.hash,
       createClaim: createReceipt.hash,
-      depositAuthorBond: depositReceipt?.hash ?? null,
-      publishClaim: publishReceipt.hash,
     },
   };
   await options.onClaimReady?.({
@@ -218,6 +161,33 @@ export async function createProductionClaim(
     ),
   });
   return result;
+}
+
+export async function publishProductionClaim(
+  claimId: string,
+  authorAddress: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<{ claimId: string; publicationStatus: "published"; publishClaimTxHash: string }> {
+  const deployment = await loadDeploymentFile(getDeploymentPath(env), { env });
+  const resolverSigner = createManagedOperatorSigner(
+    ["SP_RESOLVER_PRIVATE_KEY", "SP_PROTOCOL_ADMIN_PRIVATE_KEY", "SP_OPERATOR_PRIVATE_KEY"],
+    { env, localAccountIndex: 4 },
+  );
+  const [claimRegistry, bondEscrow] = await Promise.all([
+    getContract("ClaimRegistry", deployment.addresses.claimRegistry, resolverSigner),
+    getContract("BondEscrow", deployment.addresses.bondEscrow, resolverSigner),
+  ]);
+  const claim = await claimRegistry.getClaim(BigInt(claimId));
+  if (claim.summary.author.toLowerCase() !== authorAddress.toLowerCase()) {
+    throw new Error("claim_author_unauthorized");
+  }
+  if (Number(claim.status) !== 0) throw new Error("claim_not_draft");
+  if (!(await bondEscrow.isAuthorBondSatisfied(BigInt(claimId)))) {
+    throw new Error("claim_author_bond_unsatisfied");
+  }
+  const tx = await claimRegistry.setClaimStatus(BigInt(claimId), 1);
+  const receipt = await tx.wait();
+  return { claimId, publicationStatus: "published", publishClaimTxHash: receipt.hash };
 }
 
 export async function createProductionArtifactDraft(

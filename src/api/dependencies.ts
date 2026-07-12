@@ -120,6 +120,7 @@ import { readOperatorRequest, readOperatorRequestsPage } from "../shared/operato
 import {
   insertPublicWriteRequest,
   markPublicWriteRequestAccepted,
+  markPublicWriteRequestPending,
   markPublicWriteRequestRejected,
 } from "../shared/public-write-requests.js";
 import { readEnvValue } from "../shared/secrets.js";
@@ -138,7 +139,11 @@ import {
   readSourcesPage,
   upsertSourceRecord,
 } from "../sources/store.js";
-import { createProductionArtifactDraft, createProductionClaim } from "../submission/actions.js";
+import {
+  createProductionArtifactDraft,
+  createProductionClaim,
+  publishProductionClaim,
+} from "../submission/actions.js";
 import { accessControllerHasRole } from "./auth.js";
 
 export type ApiDependencies = {
@@ -151,6 +156,7 @@ export type ApiDependencies = {
   confirmSourcePublication: typeof confirmSourcePublication;
   createProductionArtifactDraft: typeof createProductionArtifactDraft;
   createProductionClaim: typeof createProductionClaim;
+  publishProductionClaim: typeof publishProductionClaim;
   ingestSource: typeof ingestSource;
   createDemoArtifactDraft: typeof createDemoArtifactDraft;
   createArtifactMaintenanceTask: typeof createArtifactMaintenanceTask;
@@ -169,6 +175,7 @@ export type ApiDependencies = {
   insertPublicWriteRequest: typeof insertPublicWriteRequest;
   listFeaturedDemoScenarios: typeof listFeaturedDemoScenarios;
   markPublicWriteRequestAccepted: typeof markPublicWriteRequestAccepted;
+  markPublicWriteRequestPending: typeof markPublicWriteRequestPending;
   markPublicWriteRequestRejected: typeof markPublicWriteRequestRejected;
   openDefaultReviewTasksForClaim: typeof openDefaultReviewTasksForClaim;
   openDemoReplicationJob: typeof openDemoReplicationJob;
@@ -331,10 +338,12 @@ export const defaultDependencies: ApiDependencies = {
   insertPublicWriteRequest,
   listFeaturedDemoScenarios,
   markPublicWriteRequestAccepted,
+  markPublicWriteRequestPending,
   markPublicWriteRequestRejected,
   openDefaultReviewTasksForClaim,
   openDemoReplicationJob,
   processDemoReplicationJob,
+  publishProductionClaim,
   recomputeDemoDomain,
   reseedOperationalDemoScenario,
   resetSandboxDemo,

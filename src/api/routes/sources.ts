@@ -9,11 +9,7 @@ import {
   parseBooleanParam,
   parseIntegerParam,
 } from "../params.js";
-import {
-  consumeDuplicateCooldown,
-  recordDuplicateCooldown,
-  sourceDuplicateCooldownKey,
-} from "../rate-limit.js";
+import { consumeConfiguredRateLimit, sourceDuplicateCooldownKey } from "../rate-limit.js";
 import {
   buildSourceEventsPayload,
   buildSourceFeedPayload,
@@ -32,6 +28,7 @@ export async function handleSourceWriteRoutes(context: RouteContext): Promise<bo
     env,
     pool,
     rateLimitConfig,
+    rateLimitBackend,
     readModelPath,
     request,
     response,
@@ -60,12 +57,14 @@ export async function handleSourceWriteRoutes(context: RouteContext): Promise<bo
           canonical.canonicalSourceKey,
           authenticated.envelope.actorAddress,
         );
-        const throttle = consumeDuplicateCooldown(
+        const throttle = await consumeConfiguredRateLimit({
+          backend: rateLimitBackend,
+          bucketKey: duplicateCooldownBucketKey,
+          buckets: sourceDuplicateCooldownBuckets,
+          pool,
           response,
-          sourceDuplicateCooldownBuckets,
-          duplicateCooldownBucketKey,
-          rateLimitConfig.sourceSubmission,
-        );
+          rule: rateLimitConfig.sourceSubmission,
+        });
         if (!throttle.allowed) {
           await dependencies.markPublicWriteRequestRejected(
             pool,
@@ -85,18 +84,6 @@ export async function handleSourceWriteRoutes(context: RouteContext): Promise<bo
         authenticated.envelope.actorAddress,
         pool,
       );
-      if (url.pathname === "/sources" && result.submissionOutcome === "duplicate") {
-        const canonical = canonicalizeSourceDraft(draftInput);
-        recordDuplicateCooldown(
-          sourceDuplicateCooldownBuckets,
-          sourceDuplicateCooldownKey(
-            "sourceSubmission",
-            canonical.canonicalSourceKey,
-            authenticated.envelope.actorAddress,
-          ),
-          rateLimitConfig.sourceSubmission,
-        );
-      }
       await dependencies.markPublicWriteRequestAccepted(
         pool,
         authenticated.acceptedRequestId,

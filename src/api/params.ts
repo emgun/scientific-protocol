@@ -6,6 +6,7 @@ import type {
   ReviewIssueStatus,
   ReviewSubmissionVerdict,
 } from "../review/types.js";
+import { isBlockedOutboundHostname } from "../shared/outbound-request.js";
 import { canonicalizeSourceLocator } from "../sources/canonicalize.js";
 
 export function parseIntegerParam(url: URL, key: string): number | undefined {
@@ -189,7 +190,12 @@ export function parseWebhookSubscriptionCreatePayload(payload: Record<string, un
   } catch {
     throw new Error("invalid_agent_webhook_target_url");
   }
-  if (targetUrl.protocol !== "http:" && targetUrl.protocol !== "https:") {
+  if (
+    (targetUrl.protocol !== "http:" && targetUrl.protocol !== "https:") ||
+    targetUrl.username ||
+    targetUrl.password ||
+    isBlockedOutboundHostname(targetUrl.hostname)
+  ) {
     throw new Error("invalid_agent_webhook_target_url");
   }
 

@@ -1,5 +1,6 @@
 import type http from "node:http";
 import type { URL } from "node:url";
+import type { Pool } from "pg";
 import { parseIntegerValue, readBooleanEnv } from "../shared/cli.js";
 import { getRpcUrl } from "../shared/contracts.js";
 import { isLocalDevelopmentRpcUrl } from "../shared/env.js";
@@ -93,11 +94,104 @@ export type RateLimitRecord = {
   resetAt: number;
 };
 
+export type RateLimitBackend = "memory" | "postgres";
+
+export function resolveRateLimitBackend(env: NodeJS.ProcessEnv): RateLimitBackend {
+  const configured = env.SP_RATE_LIMIT_BACKEND?.trim().toLowerCase();
+  if (configured && configured !== "memory" && configured !== "postgres") {
+    throw new Error("SP_RATE_LIMIT_BACKEND must be memory or postgres");
+  }
+  const remote = !isLocalDevelopmentRpcUrl(getRpcUrl(env));
+  const backend = (configured ??
+    (remote && env.NODE_ENV !== "test" ? "postgres" : "memory")) as RateLimitBackend;
+  if (backend === "memory" && remote && env.NODE_ENV !== "test") {
+    throw new Error("remote write services require SP_RATE_LIMIT_BACKEND=postgres");
+  }
+  return backend;
+}
+
+function setRateLimitHeaders(
+  response: http.ServerResponse,
+  rule: ApiRateLimitRule,
+  count: number,
+  resetAt: number,
+): { allowed: boolean; retryAfterSeconds: number } {
+  const now = Date.now();
+  const retryAfterSeconds = Math.max(1, Math.ceil((resetAt - now) / 1000));
+  response.setHeader("x-ratelimit-limit", String(rule.maxRequests));
+  response.setHeader("x-ratelimit-remaining", String(Math.max(0, rule.maxRequests - count)));
+  response.setHeader("x-ratelimit-reset", String(Math.ceil(resetAt / 1000)));
+  if (count > rule.maxRequests) response.setHeader("retry-after", String(retryAfterSeconds));
+  return { allowed: count <= rule.maxRequests, retryAfterSeconds };
+}
+
+export async function consumeConfiguredRateLimit(input: {
+  backend: RateLimitBackend;
+  bucketKey: string;
+  buckets: Map<string, RateLimitRecord>;
+  pool: Pool;
+  response: http.ServerResponse;
+  rule: ApiRateLimitRule;
+}): Promise<{ allowed: boolean; retryAfterSeconds: number }> {
+  if (input.rule.maxRequests <= 0 || input.rule.windowMs <= 0) {
+    return { allowed: true, retryAfterSeconds: 0 };
+  }
+  if (input.backend === "memory") {
+    return consumeRateLimit(
+      input.response,
+      input.buckets,
+      "publicDemoActions",
+      input.bucketKey,
+      input.rule,
+    );
+  }
+  try {
+    await input.pool.query(`
+      WITH expired AS (
+        SELECT bucket_key FROM api_rate_limit_buckets
+        WHERE reset_at <= NOW()
+        ORDER BY reset_at ASC
+        LIMIT 100
+      )
+      DELETE FROM api_rate_limit_buckets bucket
+      USING expired
+      WHERE bucket.bucket_key = expired.bucket_key
+    `);
+    const result = await input.pool.query<{ requestCount: number; resetAt: Date }>(
+      `
+        INSERT INTO api_rate_limit_buckets (bucket_key, request_count, reset_at)
+        VALUES ($1, 1, NOW() + ($2::text || ' milliseconds')::interval)
+        ON CONFLICT (bucket_key) DO UPDATE SET
+          request_count = CASE
+            WHEN api_rate_limit_buckets.reset_at <= NOW() THEN 1
+            ELSE api_rate_limit_buckets.request_count + 1
+          END,
+          reset_at = CASE
+            WHEN api_rate_limit_buckets.reset_at <= NOW()
+              THEN NOW() + ($2::text || ' milliseconds')::interval
+            ELSE api_rate_limit_buckets.reset_at
+          END,
+          updated_at = NOW()
+        RETURNING request_count AS "requestCount", reset_at AS "resetAt"
+      `,
+      [input.bucketKey, input.rule.windowMs],
+    );
+    const row = result.rows[0];
+    if (!row) throw new Error("rate limit bucket update returned no row");
+    return setRateLimitHeaders(input.response, input.rule, row.requestCount, row.resetAt.getTime());
+  } catch (error) {
+    throw new Error("rate_limit_store_unavailable", { cause: error });
+  }
+}
+
 export function demoRateLimitScope(
   url: URL,
   method: string | undefined,
   env: NodeJS.ProcessEnv,
 ): RateLimitScope | null {
+  if (url.pathname === "/admin/sync" && method === "GET") {
+    return "adminActions";
+  }
   if (method !== "POST") {
     return null;
   }

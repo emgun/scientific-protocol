@@ -29,11 +29,12 @@ import {
   MAX_JSON_BODY_BYTES,
 } from "./http.js";
 import {
-  consumeRateLimit,
+  consumeConfiguredRateLimit,
   demoRateLimitScope,
   type PartialApiRateLimitConfig,
   type RateLimitRecord,
   requestClientKey,
+  resolveRateLimitBackend,
   resolveRateLimitConfig,
 } from "./rate-limit.js";
 import { handleAgentActionRoutes, handleAgentReadRoutes } from "./routes/agents.js";
@@ -48,6 +49,7 @@ import { handleRewardRoutes } from "./routes/rewards.js";
 import { handleSourceReadRoutes, handleSourceWriteRoutes } from "./routes/sources.js";
 import { handleOperatorRequestRoutes, handleSystemRoutes } from "./routes/system.js";
 import { handleWorkLifecycleRoutes, handleWorkReadRoutes } from "./routes/work.js";
+import { assertPublicServiceCredentialBoundary } from "./runtime-security.js";
 
 export type { ApiDependencies } from "./dependencies.js";
 export type {
@@ -101,6 +103,7 @@ const routeHandlers: RouteHandler[] = [
 
 export async function createApiServer(options: ApiServerOptions = {}): Promise<ApiServerInstance> {
   const env = options.env ?? process.env;
+  assertPublicServiceCredentialBoundary(env);
   const readModelOptionalApi = isReadModelOptionalApi(env);
   const databaseUrl = options.databaseUrl ?? getDatabaseUrl(env);
   const deploymentPath = options.deploymentPath ?? getDeploymentPath(env);
@@ -117,6 +120,9 @@ export async function createApiServer(options: ApiServerOptions = {}): Promise<A
     ...options.dependencies,
   };
   const rateLimitConfig = resolveRateLimitConfig(options.rateLimitConfig, env);
+  const rateLimitBackend = options.dependencies
+    ? resolveRateLimitBackend({ ...env, NODE_ENV: "test", SP_RATE_LIMIT_BACKEND: "memory" })
+    : resolveRateLimitBackend(env);
   const serviceMode = options.serviceMode ?? resolveServiceMode(env);
   const rateLimitBuckets = new Map<string, RateLimitRecord>();
   const sourceDuplicateCooldownBuckets = new Map<string, RateLimitRecord>();
@@ -149,13 +155,14 @@ export async function createApiServer(options: ApiServerOptions = {}): Promise<A
         rateLimitScope !== "sourceSubmission" &&
         rateLimitScope !== "agentSourceSubmission"
       ) {
-        const result = consumeRateLimit(
+        const result = await consumeConfiguredRateLimit({
+          backend: rateLimitBackend,
+          bucketKey: `${rateLimitScope}:${requestClientKey(request, rateLimitConfig.trustProxy)}`,
+          buckets: rateLimitBuckets,
+          pool,
           response,
-          rateLimitBuckets,
-          rateLimitScope,
-          requestClientKey(request, rateLimitConfig.trustProxy),
-          rateLimitConfig[rateLimitScope],
-        );
+          rule: rateLimitConfig[rateLimitScope],
+        });
         if (!result.allowed) {
           json(response, 429, {
             error: "rate_limited",
@@ -176,6 +183,7 @@ export async function createApiServer(options: ApiServerOptions = {}): Promise<A
         pool,
         readModelOptionalApi,
         rateLimitConfig,
+        rateLimitBackend,
         readModelPath,
         request,
         response,
@@ -249,6 +257,24 @@ export async function createApiServer(options: ApiServerOptions = {}): Promise<A
           error: "json_body_too_large",
           maxBytes: MAX_JSON_BODY_BYTES,
         });
+        return;
+      }
+
+      if (error instanceof Error && error.message === "source_ingestion_in_progress") {
+        json(response, 409, { error: "source_ingestion_in_progress" });
+        return;
+      }
+
+      if (error instanceof Error && error.message === "rate_limit_store_unavailable") {
+        json(response, 503, { error: "rate_limit_store_unavailable" });
+        return;
+      }
+
+      if (
+        error instanceof Error &&
+        (error.message === "claim_author_bond_unsatisfied" || error.message === "claim_not_draft")
+      ) {
+        json(response, 409, { error: error.message });
         return;
       }
 

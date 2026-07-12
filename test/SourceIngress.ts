@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { expect } from "chai";
+import { consumeConfiguredRateLimit } from "../src/api/rate-limit.js";
 import type { ArtifactDraftInput, ArtifactIngestionResult } from "../src/artifacts/ingestion.js";
 import { upsertPersistedArtifact } from "../src/coordinator/store.js";
+import { migrateReadModelDb } from "../src/indexer/store.js";
 import {
   attemptSourceAutoPublication,
   type SourceAutoPublicationDependencies,
@@ -24,8 +26,10 @@ import { ingestSource } from "../src/sources/service.js";
 import {
   insertSourceExtractionCandidate,
   prepareSourceStore,
+  readSourceIngestionAttempt,
   readSourcePublicationAttempt,
   readSourceSubmissionRecordsPage,
+  reserveSourceIngestionAttempt,
   upsertSourceRecord,
 } from "../src/sources/store.js";
 import type { SourceExtractionCandidate } from "../src/sources/types.js";
@@ -152,7 +156,15 @@ describe("source ingress", { skip: database.skipReason }, () => {
 
     try {
       await assert.rejects(
-        confirmSourcePublication(pool, input, env, { createClaim, syncClaimReadModel }),
+        confirmSourcePublication(pool, input, env, {
+          createClaim,
+          publishClaim: async (claimId) => ({
+            claimId,
+            publicationStatus: "published",
+            publishClaimTxHash: "0xmanualpublishresume",
+          }),
+          syncClaimReadModel,
+        }),
         /simulated manual indexer outage/,
       );
       await pool.query(
@@ -167,6 +179,11 @@ describe("source ingress", { skip: database.skipReason }, () => {
 
       const resumed = await confirmSourcePublication(pool, input, env, {
         createClaim,
+        publishClaim: async (claimId) => ({
+          claimId,
+          publicationStatus: "published",
+          publishClaimTxHash: "0xmanualpublishresume",
+        }),
         syncClaimReadModel,
       });
       expect(resumed.publishedClaimId).to.equal(testClaimId);
@@ -179,7 +196,7 @@ describe("source ingress", { skip: database.skipReason }, () => {
     }
   });
 
-  it("resumes a claim-ready publication without creating a duplicate claim", async () => {
+  it("keeps auto-publication paused when a claim-ready draft needs an author signature", async () => {
     const pool = await prepareSourceStore();
     const artifactRoot = await mkdtemp(path.join(os.tmpdir(), "sp-source-publication-"));
     const source = await upsertSourceRecord(pool, {
@@ -283,11 +300,12 @@ describe("source ingress", { skip: database.skipReason }, () => {
         createClaim,
         syncClaimReadModel,
       });
-      expect(resumed.publishedClaimId).to.equal(testClaimId);
-      expect(resumed.source?.status).to.equal("published");
+      expect(resumed.publishedClaimId).to.equal(null);
+      expect(resumed.reason).to.equal("awaiting_author_bond");
+      expect(resumed.source?.status).to.equal("ready_for_publication");
       expect(createCalls).to.equal(1);
       expect((await readSourcePublicationAttempt(pool, source.sourceId))?.status).to.equal(
-        "completed",
+        "claim_ready",
       );
     } finally {
       await pool.query("DELETE FROM claims WHERE claim_id = $1", [testClaimId]);
@@ -686,7 +704,7 @@ describe("source ingress", { skip: database.skipReason }, () => {
     }
   });
 
-  it("serializes concurrent duplicate submissions under a source lock", async () => {
+  it("leases concurrent submissions so only one performs ingestion", async () => {
     const pool = await prepareSourceStore();
     const artifactRoot = await mkdtemp(path.join(os.tmpdir(), "sp-source-ingress-lock-"));
     const sourcePath = path.join(artifactRoot, "paper.txt");
@@ -737,9 +755,10 @@ describe("source ingress", { skip: database.skipReason }, () => {
       });
 
       const deadline = Date.now() + 5_000;
-      while (ingestCalls === 0 && Date.now() < deadline) {
+      while (ingestCalls < 1 && Date.now() < deadline) {
         await new Promise<void>((resolve) => setTimeout(resolve, 10));
       }
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
       expect(ingestCalls).to.equal(1);
 
       releaseFirstIngest?.();
@@ -748,8 +767,10 @@ describe("source ingress", { skip: database.skipReason }, () => {
       expect(ingestCalls).to.equal(1);
       expect(taskCalls).to.equal(1);
       expect(first.source.sourceId).to.equal(second.source.sourceId);
-      expect(first.submissionOutcome).to.equal("created");
-      expect(second.submissionOutcome).to.equal("duplicate");
+      expect([first.submissionOutcome, second.submissionOutcome].sort()).to.deep.equal([
+        "created",
+        "duplicate",
+      ]);
 
       const submissions = await readSourceSubmissionRecordsPage(pool, {
         limit: 10,
@@ -762,6 +783,147 @@ describe("source ingress", { skip: database.skipReason }, () => {
       releaseFirstIngest?.();
       await pool.end();
       await rm(artifactRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("recovers a source ingestion attempt after an abandoned lease expires", async () => {
+    const pool = await prepareSourceStore();
+    const sourcePath = `https://example.com/abandoned-source-${randomUUID()}.txt`;
+    const canonical = canonicalizeSourceLocator({
+      locator: sourcePath,
+      ref: null,
+      sourceType: "url",
+    });
+    try {
+      const abandoned = await reserveSourceIngestionAttempt(pool, {
+        canonicalSourceKey: canonical.canonicalSourceKey,
+        leaseMs: 20,
+        leaseOwner: "dead-worker",
+        normalizedLocator: canonical.normalizedLocator,
+        rawLocator: sourcePath,
+        sourceType: "url",
+      });
+      expect(abandoned.acquired).to.equal(true);
+
+      let ingestCalls = 0;
+      const result = await ingestSource(
+        pool,
+        { sourceType: "url", sourceUrl: sourcePath },
+        {
+          artifactIngestor: async () => {
+            ingestCalls += 1;
+            return makeStubIngestionResult(sourcePath);
+          },
+          ingestionLeaseMs: 1_000,
+          ingestionWaitMs: 100,
+          ingestionWaitPollMs: 5,
+          leaseOwner: "recovery-worker",
+          openSourceExtractionTasks: async () => {},
+        },
+      );
+
+      expect(result.submissionOutcome).to.equal("created");
+      expect(ingestCalls).to.equal(1);
+      const attempt = await readSourceIngestionAttempt(pool, canonical.canonicalSourceKey);
+      expect(attempt?.status).to.equal("completed");
+      expect(attempt?.attemptCount).to.equal(2);
+      expect(attempt?.sourceId).to.equal(result.source.sourceId);
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it("serializes migrations and rejects changed applied migration bytes", async () => {
+    const pool = await prepareSourceStore();
+    const migrationsPath = await mkdtemp(path.join(os.tmpdir(), "sp-migration-checksum-"));
+    const migrationFile = path.join(migrationsPath, "999_checksum_probe.sql");
+    try {
+      await writeFile(
+        migrationFile,
+        "CREATE TABLE IF NOT EXISTS migration_checksum_probe (id INTEGER PRIMARY KEY);\n",
+      );
+      await Promise.all([
+        migrateReadModelDb(pool, migrationsPath),
+        migrateReadModelDb(pool, migrationsPath),
+      ]);
+      const applied = await pool.query<{ checksum: string | null }>(
+        "SELECT checksum FROM schema_migrations WHERE version = '999_checksum_probe.sql'",
+      );
+      expect(applied.rows[0]?.checksum).to.match(/^[0-9a-f]{64}$/);
+
+      await writeFile(
+        migrationFile,
+        "CREATE TABLE IF NOT EXISTS migration_checksum_probe (id INTEGER PRIMARY KEY);\n-- changed\n",
+      );
+      await assert.rejects(
+        migrateReadModelDb(pool, migrationsPath),
+        /migration checksum mismatch: 999_checksum_probe.sql/,
+      );
+    } finally {
+      await pool.query("DROP TABLE IF EXISTS migration_checksum_probe");
+      await pool.query("DELETE FROM schema_migrations WHERE version = '999_checksum_probe.sql'");
+      await pool.end();
+      await rm(migrationsPath, { force: true, recursive: true });
+    }
+  });
+
+  it("installs canonical resolution decision and forecast linkage storage", async () => {
+    const pool = await prepareSourceStore();
+    try {
+      const tables = await pool.query<{ tableName: string }>(
+        `SELECT table_name AS "tableName" FROM information_schema.tables
+         WHERE table_schema = 'public' AND table_name = 'resolution_decisions'`,
+      );
+      expect(tables.rows.map((row) => row.tableName)).to.deep.equal(["resolution_decisions"]);
+      const columns = await pool.query<{ columnName: string }>(
+        `SELECT column_name AS "columnName" FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'forecasts'
+           AND column_name = 'resolution_decision_id'`,
+      );
+      expect(columns.rows.map((row) => row.columnName)).to.deep.equal(["resolution_decision_id"]);
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it("atomically enforces a write limit across service instances", async () => {
+    const pool = await prepareSourceStore();
+    const bucketKey = `cross-instance:${randomUUID()}`;
+    const response = { setHeader() {} } as unknown as import("node:http").ServerResponse;
+    try {
+      await pool.query(
+        `INSERT INTO api_rate_limit_buckets (bucket_key, request_count, reset_at)
+         SELECT 'expired-test-' || value::text, 1, NOW() - INTERVAL '1 second'
+         FROM generate_series(1, 3) AS value`,
+      );
+      const results = await Promise.all([
+        consumeConfiguredRateLimit({
+          backend: "postgres",
+          bucketKey,
+          buckets: new Map(),
+          pool,
+          response,
+          rule: { maxRequests: 1, windowMs: 60_000 },
+        }),
+        consumeConfiguredRateLimit({
+          backend: "postgres",
+          bucketKey,
+          buckets: new Map(),
+          pool,
+          response,
+          rule: { maxRequests: 1, windowMs: 60_000 },
+        }),
+      ]);
+      expect(results.filter((result) => result.allowed)).to.have.length(1);
+      expect(results.filter((result) => !result.allowed)).to.have.length(1);
+      const expired = await pool.query<{ count: string }>(
+        "SELECT COUNT(*)::text AS count FROM api_rate_limit_buckets WHERE bucket_key LIKE 'expired-test-%'",
+      );
+      expect(expired.rows[0]?.count).to.equal("0");
+    } finally {
+      await pool.query("DELETE FROM api_rate_limit_buckets WHERE bucket_key = $1", [bucketKey]);
+      await pool.query("DELETE FROM api_rate_limit_buckets WHERE bucket_key LIKE 'expired-test-%'");
+      await pool.end();
     }
   });
 

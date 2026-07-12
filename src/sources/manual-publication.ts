@@ -5,7 +5,7 @@ import { getDatabaseUrl, ReadModelSyncInProgressError } from "../indexer/store.j
 import { getDeploymentPath } from "../shared/deployment.js";
 import { createManagedOperatorSigner } from "../shared/operator.js";
 import { persistJsonArtifact } from "../shared/persisted-artifacts.js";
-import { createProductionClaim } from "../submission/actions.js";
+import { createProductionClaim, publishProductionClaim } from "../submission/actions.js";
 import { sourcePublicationDomainId } from "./publication.js";
 import {
   markSourcePublicationAttemptCompleted,
@@ -27,7 +27,9 @@ import type {
 
 export type ConfirmSourcePublicationResult = {
   decision: SourcePublicationDecisionView;
-  publishedClaimId: string;
+  draftClaimId: string | null;
+  publicationStatus: "awaiting_author_bond" | "published";
+  publishedClaimId: string | null;
   source: SourceRecordView;
 };
 
@@ -84,6 +86,7 @@ async function syncPublicationClaimReadModel(env: NodeJS.ProcessEnv): Promise<vo
 
 export type ManualSourcePublicationDependencies = {
   createClaim?: typeof createProductionClaim;
+  publishClaim?: typeof publishProductionClaim;
   syncClaimReadModel?: typeof syncPublicationClaimReadModel;
 };
 
@@ -195,6 +198,7 @@ export async function confirmSourcePublication(
   dependencies: ManualSourcePublicationDependencies = {},
 ): Promise<ConfirmSourcePublicationResult> {
   const createClaim = dependencies.createClaim ?? createProductionClaim;
+  const publishClaim = dependencies.publishClaim ?? publishProductionClaim;
   const syncClaimReadModel = dependencies.syncClaimReadModel ?? syncPublicationClaimReadModel;
   const source = await readSourceRecord(pool, input.sourceId);
   if (!source) {
@@ -220,6 +224,7 @@ export async function confirmSourcePublication(
     sourceId: input.sourceId,
   });
   let publishedClaimId: string;
+  let draftClaimId: string | null = null;
   if (!reservation.created) {
     if (
       reservation.attempt.candidateId !== winningCandidate.candidateId ||
@@ -231,6 +236,7 @@ export async function confirmSourcePublication(
       throw new Error("source_publication_requires_reconciliation");
     }
     publishedClaimId = reservation.attempt.claimId;
+    await publishClaim(publishedClaimId, input.actorAddress, env);
   } else {
     const authorAddress = await resolvePublicationAuthor(source, env);
     try {
@@ -254,12 +260,48 @@ export async function confirmSourcePublication(
             await markSourcePublicationClaimReady(pool, {
               claimId: checkpoint.claimId,
               sourceId: input.sourceId,
-              transactionHashes: checkpoint.txHashes,
+              transactionHashes: {
+                addArtifact: checkpoint.txHashes.addArtifact,
+                createClaim: checkpoint.txHashes.createClaim,
+              },
             });
           },
         },
       );
       publishedClaimId = claim.claimId;
+      if (claim.publicationStatus === "awaiting_author_bond") {
+        draftClaimId = claim.claimId;
+        const readySource =
+          (await updateSourceRecordStatus(pool, {
+            sourceId: input.sourceId,
+            status: "ready_for_publication",
+          })) ?? source;
+        const decision = await recordSourcePublicationDecision(pool, {
+          decisionArtifactKey: await persistSourceDecisionArtifact(pool, {
+            actorAddress: input.actorAddress,
+            candidates,
+            decisionMode: "manual_confirm",
+            env,
+            publishedClaimId: null,
+            reason: "awaiting_author_bond",
+            shouldPublish: false,
+            source: readySource,
+            winningCandidate,
+          }),
+          publishedClaimId: null,
+          reason: "awaiting_author_bond",
+          shouldPublish: false,
+          sourceId: input.sourceId,
+          winningCluster: clusterFromCandidate(winningCandidate),
+        });
+        return {
+          decision,
+          draftClaimId,
+          publicationStatus: "awaiting_author_bond",
+          publishedClaimId: null,
+          source: readySource,
+        };
+      }
     } catch (error) {
       await markSourcePublicationReconciliationRequired(pool, {
         error: error instanceof Error ? error.message : String(error),
@@ -297,6 +339,8 @@ export async function confirmSourcePublication(
   await markSourcePublicationAttemptCompleted(pool, input.sourceId);
   return {
     decision,
+    draftClaimId,
+    publicationStatus: "published",
     publishedClaimId,
     source: publishedSource,
   };

@@ -119,18 +119,17 @@ export async function handleSystemRoutes(context: RouteContext): Promise<boolean
     return true;
   }
 
-  const isCronSyncRequest = url.pathname === "/admin/sync" && request.method === "GET";
-  if (url.pathname === "/admin/sync" && (request.method === "POST" || isCronSyncRequest)) {
-    if (isCronSyncRequest) {
-      // Cron invocations are GET requests carrying the CRON_SECRET bearer
-      // token. Without a configured secret the GET form stays disabled; POST
-      // remains the operator-facing trigger.
-      const cronSecret = readEnvValue(env, "CRON_SECRET");
-      const authorization = request.headers.authorization ?? "";
-      if (!cronSecret || authorization !== `Bearer ${cronSecret}`) {
-        json(response, 401, { error: "unauthorized" });
-        return true;
-      }
+  if (url.pathname === "/admin/sync") {
+    if (request.method !== "GET") {
+      response.setHeader("allow", "GET");
+      json(response, 405, { error: "method_not_allowed" });
+      return true;
+    }
+    const cronSecret = readEnvValue(env, "CRON_SECRET");
+    const authorization = request.headers.authorization ?? "";
+    if (!cronSecret || authorization !== `Bearer ${cronSecret}`) {
+      json(response, 401, { error: "unauthorized" });
+      return true;
     }
 
     const synced = await dependencies.syncReadModel(deploymentPath, readModelPath, databaseUrl, {

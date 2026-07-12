@@ -147,6 +147,11 @@ export async function resolveReplicationJob(
   options: ResolveJobOptions,
 ): Promise<ResolutionRunView> {
   const env = options.env ?? process.env;
+  if (env.SP_REFERENCE_CANARY_MODE !== "true") {
+    throw new Error(
+      "reference resolver is disabled; set SP_REFERENCE_CANARY_MODE=true only for an explicit non-authoritative canary",
+    );
+  }
   const pool = await prepareResolverStore(options.connectionString ?? getDatabaseUrl(env));
   let signer: NonceManager | undefined;
   try {

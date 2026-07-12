@@ -856,6 +856,49 @@ describe("ScientificProtocolClient", () => {
     });
   });
 
+  it("posts bonded claim publication as a signed author action", async () => {
+    let capturedMethod = "";
+    let capturedUrl = "";
+    let capturedBody = "";
+    const client = new ScientificProtocolClient({
+      baseUrl: "https://demo.example.org",
+      fetch: async (input, init) => {
+        capturedUrl = String(input);
+        capturedMethod = init?.method ?? "GET";
+        capturedBody = String(init?.body ?? "");
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            requestId: "publish-23",
+            result: {
+              claimId: "23",
+              publicationStatus: "published",
+              publishClaimTxHash: "0xpublish",
+            },
+          }),
+          { headers: { "content-type": "application/json" }, status: 200 },
+        );
+      },
+    });
+    const request = {
+      envelope: {
+        actionType: "claim_publish" as const,
+        actorAddress: "0x0000000000000000000000000000000000000abc",
+        chainId: 31337,
+        issuedAt: "2026-07-12T00:00:00.000Z",
+        payload: { claimId: "23" },
+        requestNonce: "publish-nonce-23",
+        scopeKey: "claim:23",
+      },
+      signature: "0xsigned",
+    };
+
+    await client.production.publishClaim(23, request);
+    expect(capturedUrl).to.equal("https://demo.example.org/claims/23/publish");
+    expect(capturedMethod).to.equal("POST");
+    expect(JSON.parse(capturedBody)).to.deep.equal(request);
+  });
+
   it("posts production source ingestion mutations as signed JSON payloads", async () => {
     let capturedMethod = "";
     let capturedUrl = "";

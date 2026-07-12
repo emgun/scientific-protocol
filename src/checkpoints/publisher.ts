@@ -19,6 +19,7 @@ import {
   reserveOperatorRequestNonce,
   signOperatorRequestEnvelope,
 } from "../shared/operator-requests.js";
+import { readAllPages } from "../shared/pagination.js";
 import { persistJsonArtifact } from "../shared/persisted-artifacts.js";
 import { collectClaimWorkArtifactKeys } from "../work/graph.js";
 import {
@@ -155,16 +156,18 @@ export async function publishDomainCheckpoints(
   const pool = await prepareCheckpointStore(options.connectionString);
   let signer: NonceManager | null = null;
   try {
-    const [payload, leaderboard, claimsPage] = await Promise.all([
+    const [payload, leaderboard, claims] = await Promise.all([
       readLatestReputationPayload(pool, options.domainId),
-      readDomainLeaderboard(pool, options.domainId, { limit: 1000, offset: 0 }),
-      readClaimsPage(pool, { domainId: options.domainId, limit: 1000, offset: 0 }),
+      readAllPages((pagination) => readDomainLeaderboard(pool, options.domainId, pagination)),
+      readAllPages((pagination) =>
+        readClaimsPage(pool, { ...pagination, domainId: options.domainId }),
+      ),
     ]);
     if (!payload) {
       throw new Error(`no reputation payload found for domain ${options.domainId}`);
     }
 
-    const claimIds = new Set(claimsPage.items.map((claim) => claim.claimId));
+    const claimIds = new Set(claims.map((claim) => claim.claimId));
     const [
       allReplications,
       allReviewTasks,
@@ -172,24 +175,22 @@ export async function publishDomainCheckpoints(
       allReplicationJobs,
       allMaintenanceTasks,
     ] = await Promise.all([
-      readReplicationsPage(pool, { limit: 1000, offset: 0 }),
-      readReviewTasksPage(pool, { limit: 1000, offset: 0 }),
-      readReviewSubmissionsPage(pool, { limit: 1000, offset: 0 }),
-      readReplicationJobsPage(pool, { limit: 1000, offset: 0 }),
-      readArtifactMaintenanceTasksPage(pool, { limit: 1000, offset: 0 }),
+      readAllPages((pagination) => readReplicationsPage(pool, pagination)),
+      readAllPages((pagination) => readReviewTasksPage(pool, pagination)),
+      readAllPages((pagination) => readReviewSubmissionsPage(pool, pagination)),
+      readAllPages((pagination) => readReplicationJobsPage(pool, pagination)),
+      readAllPages((pagination) => readArtifactMaintenanceTasksPage(pool, pagination)),
     ]);
-    const domainReplications = allReplications.items.filter((replication) =>
+    const domainReplications = allReplications.filter((replication) =>
       claimIds.has(replication.claimId),
     );
-    const domainReviewTasks = allReviewTasks.items.filter(
+    const domainReviewTasks = allReviewTasks.filter(
       (task) => typeof task.claimId === "string" && claimIds.has(task.claimId),
     );
-    const domainReviewSubmissions = allReviewSubmissions.items.filter(
+    const domainReviewSubmissions = allReviewSubmissions.filter(
       (submission) => typeof submission.claimId === "string" && claimIds.has(submission.claimId),
     );
-    const domainReplicationJobs = allReplicationJobs.items.filter((job) =>
-      claimIds.has(job.claimId),
-    );
+    const domainReplicationJobs = allReplicationJobs.filter((job) => claimIds.has(job.claimId));
     const domainArtifactKeys = new Set(
       collectClaimWorkArtifactKeys({
         replicationJobs: domainReplicationJobs,
@@ -197,11 +198,11 @@ export async function publishDomainCheckpoints(
         reviewTasks: domainReviewTasks,
       }),
     );
-    const domainMaintenanceTasks = allMaintenanceTasks.items.filter((task) =>
+    const domainMaintenanceTasks = allMaintenanceTasks.filter((task) =>
       domainArtifactKeys.has(task.artifactKey),
     );
     const agentAggregates = buildAgentWorkSummaries({
-      claims: claimsPage.items,
+      claims,
       maintenanceTasks: domainMaintenanceTasks,
       replicationJobs: domainReplicationJobs,
       replications: domainReplications,
@@ -232,7 +233,7 @@ export async function publishDomainCheckpoints(
     const moduleAddress = await moduleRegistry.getDomainModule(options.domainId);
 
     const publications: CheckpointPublicationView[] = [];
-    for (const entry of leaderboard.items) {
+    for (const entry of leaderboard) {
       publications.push(
         await publishSubject(checkpointRegistry, pool, signer, {
           chainId: deployment.chainId,
@@ -288,7 +289,7 @@ export async function publishDomainCheckpoints(
         payloadId: payload.payloadId,
         publisher,
         scorePayload: {
-          claimCount: claimsPage.total,
+          claimCount: claims.length,
           domainId: options.domainId,
           kind: "module",
           moduleAddress,

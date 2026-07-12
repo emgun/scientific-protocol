@@ -81,6 +81,7 @@ export type WriteProtocolConfigView = ProtocolRecord;
 
 export type PublicWriteActionType =
   | "claim_create"
+  | "claim_publish"
   | "claim_draft_from_artifact"
   | "domain_recompute"
   | "replication_job_open"

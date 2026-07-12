@@ -52,6 +52,11 @@ metadata. See [docs/migrations/0.3.0.md](docs/migrations/0.3.0.md).
   `ProvisionallySupported`, `Qualified` recommends `Qualified`, `Inconclusive` and `Escalated`
   recommend `UnderReplication`, and `Refuted`/`FraudSignal` recommend their matching terminal
   outcome. `Pending` is not finalizable.
+- Durable source-ingestion leases, canonical indexer block-hash checkpoints, a fresh-database
+  rebuild command, checksummed/serialized migrations, versioned reputation policy, and a shared
+  Postgres write-rate limiter.
+- Bounded outbound requests with DNS/private-network containment and a public-service credential
+  boundary that rejects funds-moving keys and reference-canary execution.
 
 ### Changed
 
@@ -60,9 +65,13 @@ metadata. See [docs/migrations/0.3.0.md](docs/migrations/0.3.0.md).
 - OpenAPI is versioned at 0.3.0 and correctly models GET and POST as operations on `/sources`.
 - API processes no longer run migrations implicitly; operators run the explicit migration command
   as a release step.
-- Claim publication flows deposit the declared author bond before requesting `Published`. The
-  operated submission path fails before creating a claim when a nonzero bond is required but no
-  configured signer controls the declared author address.
+- Service-assisted claim publication is a two-step saga. `claim_create` creates an auditable draft;
+  the author deposits the declared bond directly and signs `claim_publish` before the operated
+  resolver requests `Published`. Replication work cannot open while publication is pending.
+- Internal collection readers exhaust pagination instead of inheriting public page caps. Remote
+  indexers hold a confirmation window and fail closed on a stored cursor/hash mismatch.
+- The reference indexer persists canonical resolution decisions and the exact decision id used to
+  settle each forecast.
 
 ## [0.2.2] — 2026-07-10
 

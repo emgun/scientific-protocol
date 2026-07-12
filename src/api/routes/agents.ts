@@ -23,11 +23,7 @@ import {
   parseTimestampParam,
   parseWebhookSubscriptionCreatePayload,
 } from "../params.js";
-import {
-  consumeDuplicateCooldown,
-  recordDuplicateCooldown,
-  sourceDuplicateCooldownKey,
-} from "../rate-limit.js";
+import { consumeConfiguredRateLimit, sourceDuplicateCooldownKey } from "../rate-limit.js";
 import {
   buildAgentControllerCount,
   buildAgentReviewCalibrationPayload,
@@ -45,6 +41,7 @@ export async function handleAgentActionRoutes(context: RouteContext): Promise<bo
     env,
     pool,
     rateLimitConfig,
+    rateLimitBackend,
     request,
     response,
     sourceDuplicateCooldownBuckets,
@@ -886,12 +883,14 @@ export async function handleAgentActionRoutes(context: RouteContext): Promise<bo
         authenticated.envelope.actorAddress,
         authenticated.envelope.agentId,
       );
-      const throttle = consumeDuplicateCooldown(
+      const throttle = await consumeConfiguredRateLimit({
+        backend: rateLimitBackend,
+        bucketKey: duplicateCooldownBucketKey,
+        buckets: sourceDuplicateCooldownBuckets,
+        pool,
         response,
-        sourceDuplicateCooldownBuckets,
-        duplicateCooldownBucketKey,
-        rateLimitConfig.agentSourceSubmission,
-      );
+        rule: rateLimitConfig.agentSourceSubmission,
+      });
       if (!throttle.allowed) {
         await dependencies.insertAgentRequest(pool, {
           actionType: authenticated.envelope.actionType,
@@ -917,13 +916,6 @@ export async function handleAgentActionRoutes(context: RouteContext): Promise<bo
         submittedByActor: authenticated.envelope.actorAddress,
         submittedByAgentId: authenticated.envelope.agentId,
       });
-      if (result.submissionOutcome === "duplicate") {
-        recordDuplicateCooldown(
-          sourceDuplicateCooldownBuckets,
-          duplicateCooldownBucketKey,
-          rateLimitConfig.agentSourceSubmission,
-        );
-      }
       const recorded = await dependencies.insertAgentRequest(pool, {
         actionType: authenticated.envelope.actionType,
         actorAddress: authenticated.envelope.actorAddress,

@@ -238,6 +238,11 @@ export class ScientificProtocolClient {
         body: signedRequest,
         method: "POST",
       }),
+    publishClaim: (claimId: string | number, signedRequest: SignedPublicWriteRequestBody) =>
+      this.request<DemoMutationResponse<Record<string, unknown>>>(`/claims/${claimId}/publish`, {
+        body: signedRequest,
+        method: "POST",
+      }),
     createSource: (signedRequest: SignedPublicWriteRequestBody) =>
       this.request<SourceIngestionResponse>("/sources", {
         body: signedRequest,

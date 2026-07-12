@@ -5,6 +5,7 @@ import { describe, it } from "node:test";
 import { expect } from "chai";
 import {
   DEFAULT_READ_MODEL_PATH,
+  getIndexerConfirmationDepth,
   getReadModelPath,
   resolveReadModelSyncConfig,
 } from "../src/indexer/projector.js";
@@ -15,7 +16,7 @@ import {
   resolveDatabasePoolConfig,
 } from "../src/indexer/store.js";
 import { resolveEtherInput, resolveNonEmptyStringInput } from "../src/shared/numbers.js";
-import { normalizePagination } from "../src/shared/pagination.js";
+import { normalizePagination, readAllPages } from "../src/shared/pagination.js";
 
 describe("read model store configuration", () => {
   it("keeps the exported default database url independent of process env", () => {
@@ -26,6 +27,17 @@ describe("read model store configuration", () => {
 
   it("keeps the exported default read model path independent of process env", () => {
     expect(DEFAULT_READ_MODEL_PATH.endsWith("/ops/read-model.json")).to.equal(true);
+  });
+
+  it("holds remote indexers behind a confirmation window", () => {
+    expect(getIndexerConfirmationDepth({ SP_RPC_URL: "http://127.0.0.1:8545" })).to.equal(0);
+    expect(getIndexerConfirmationDepth({ SP_RPC_URL: "https://base.example/rpc" })).to.equal(12);
+    expect(
+      getIndexerConfirmationDepth({
+        SP_INDEXER_CONFIRMATION_DEPTH: "24",
+        SP_RPC_URL: "https://base.example/rpc",
+      }),
+    ).to.equal(24);
   });
 
   it("resolves read model paths from runtime environment", () => {
@@ -141,5 +153,19 @@ describe("read model store configuration", () => {
       limit: 2,
       offset: 3,
     });
+  });
+
+  it("reads complete internal collections without weakening the public page cap", async () => {
+    for (const count of [101, 1_000]) {
+      const records = Array.from({ length: count }, (_, index) => index + 1);
+      const observedPageSizes: number[] = [];
+      const all = await readAllPages(async ({ limit, offset }) => {
+        observedPageSizes.push(limit);
+        return { items: records.slice(offset, offset + limit), total: records.length };
+      });
+      expect(all).to.deep.equal(records);
+      expect(observedPageSizes.every((size) => size <= 100)).to.equal(true);
+      expect(observedPageSizes).to.have.length(Math.ceil(count / 100));
+    }
   });
 });

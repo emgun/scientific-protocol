@@ -370,6 +370,7 @@ function createDependencyOverrides(
       cutoffBlock: 42,
       cursorBlock: 41,
       payloadHash: "0xa001",
+      policyVersion: "reputation-v2-direction-neutral-work",
       artifactKey: "reputation-payload-a001",
       entryCount: 1,
       createdAt: "2026-03-11T00:06:00.000Z",
@@ -1597,6 +1598,21 @@ function createDependencyOverrides(
       payload: {},
       status: "accepted" as const,
       outcomeDetail: outcomeDetail ?? null,
+      createdAt: "2026-03-11T00:11:40.000Z",
+      updatedAt: "2026-03-11T00:11:41.000Z",
+    }),
+    markPublicWriteRequestPending: async (_pool, requestId, outcomeDetail) => ({
+      requestId,
+      actionType: "claim_create" as const,
+      actorAddress: "0x0000000000000000000000000000000000000001",
+      chainId: 31337,
+      requestNonce: "nonce-1",
+      scopeKey: "claim:1",
+      requestHash: "0xwritehash",
+      signature: "0xsigned",
+      payload: {},
+      status: "pending" as const,
+      outcomeDetail,
       createdAt: "2026-03-11T00:11:40.000Z",
       updatedAt: "2026-03-11T00:11:41.000Z",
     }),
@@ -2840,23 +2856,14 @@ describe("ApiServer", () => {
     }
   });
 
-  it("returns sync summary counts from /admin/sync", async () => {
+  it("rejects unauthenticated POST /admin/sync", async () => {
     const { baseUrl, close } = await startServer();
 
     try {
       const response = await fetch(`${baseUrl}/admin/sync`, { method: "POST" });
-      expect(response.status).to.equal(200);
-
-      const payload = await response.json();
-      expect(payload.ok).to.equal(true);
-      expect(payload.latestBlock).to.equal(45);
-      expect(payload.claims).to.equal(1);
-      expect(payload.replications).to.equal(1);
-      expect(payload.checkpoints).to.equal(1);
-      expect(payload.agents).to.equal(1);
-      expect(payload.forecasts).to.equal(1);
-      expect(payload.challenges).to.equal(1);
-      expect(payload.appeals).to.equal(1);
+      expect(response.status).to.equal(405);
+      expect(response.headers.get("allow")).to.equal("GET");
+      expect(await response.json()).to.deep.equal({ error: "method_not_allowed" });
     } finally {
       await close();
     }
@@ -3128,14 +3135,19 @@ describe("ApiServer", () => {
   });
 
   it("maps sync lock contention to HTTP 409", async () => {
-    const { baseUrl, close } = await startServer({
-      syncReadModel: async () => {
-        throw new ReadModelSyncInProgressError();
+    const { baseUrl, close } = await startServer(
+      {
+        syncReadModel: async () => {
+          throw new ReadModelSyncInProgressError();
+        },
       },
-    });
+      { env: { CRON_SECRET: "cron-test-secret" } },
+    );
 
     try {
-      const response = await fetch(`${baseUrl}/admin/sync`, { method: "POST" });
+      const response = await fetch(`${baseUrl}/admin/sync`, {
+        headers: { authorization: "Bearer cron-test-secret" },
+      });
       expect(response.status).to.equal(409);
       expect(await response.json()).to.deep.equal({ error: "sync_in_progress" });
     } finally {
@@ -3551,11 +3563,11 @@ describe("ApiServer", () => {
           author: authorAddress,
           claimId: "23",
           job: null,
+          publicationStatus: "awaiting_author_bond" as const,
           submittedBy: "0x00000000000000000000000000000000000000aa",
           txHashes: {
             addArtifact: "0xartifact",
             createClaim: "0xcreate",
-            publishClaim: "0xpublish",
           },
         };
       },
@@ -3599,6 +3611,41 @@ describe("ApiServer", () => {
       expect(payload.ok).to.equal(true);
       expect(payload.requestId).to.equal("91");
       expect(payload.result.claimId).to.equal("23");
+    } finally {
+      await close();
+    }
+  });
+
+  it("publishes a bonded draft through a second signed author request", async () => {
+    const wallet = Wallet.createRandom();
+    let received: { authorAddress: string; claimId: string } | null = null;
+    const { baseUrl, close } = await startServer({
+      publishProductionClaim: async (claimId, authorAddress) => {
+        received = { authorAddress, claimId };
+        return { claimId, publicationStatus: "published", publishClaimTxHash: "0xpublish" };
+      },
+    });
+    try {
+      const writeConfig = await fetch(`${baseUrl}/write-config`).then((response) =>
+        response.json(),
+      );
+      const signed = await buildSignedPublicWriteBody(wallet, {
+        actionType: "claim_publish",
+        actorAddress: wallet.address,
+        chainId: writeConfig.chainId,
+        issuedAt: new Date().toISOString(),
+        payload: {},
+        requestNonce: "claim-publish-23",
+        scopeKey: "claim:23",
+      });
+      const response = await fetch(`${baseUrl}/claims/23/publish`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(signed),
+      });
+      expect(response.status).to.equal(200);
+      expect(received).to.deep.equal({ authorAddress: wallet.address, claimId: "23" });
+      expect((await response.json()).result.publicationStatus).to.equal("published");
     } finally {
       await close();
     }
@@ -4881,8 +4928,8 @@ describe("ApiServer", () => {
         ),
       });
       const secondPayload = await secondResponse.json();
-      expect(secondPayload.ok).to.equal(true);
-      expect(secondPayload.result.submissionOutcome).to.equal("duplicate");
+      expect(secondResponse.status).to.equal(429);
+      expect(secondPayload.error).to.equal("rate_limited");
 
       const thirdResponse = await fetch(`${baseUrl}/sources`, {
         method: "POST",
@@ -4908,7 +4955,7 @@ describe("ApiServer", () => {
         retryAfterSeconds: 60,
         scope: "sourceSubmission",
       });
-      expect(createCalls).to.equal(2);
+      expect(createCalls).to.equal(1);
     } finally {
       await close();
     }
@@ -5176,8 +5223,8 @@ describe("ApiServer", () => {
         ),
       });
       const secondPayload = await secondResponse.json();
-      expect(secondPayload.ok).to.equal(true);
-      expect(secondPayload.result.submissionOutcome).to.equal("duplicate");
+      expect(secondResponse.status).to.equal(429);
+      expect(secondPayload.error).to.equal("rate_limited");
 
       const thirdResponse = await fetch(`${baseUrl}/agent/sources`, {
         method: "POST",
@@ -5203,7 +5250,7 @@ describe("ApiServer", () => {
         retryAfterSeconds: 60,
         scope: "agentSourceSubmission",
       });
-      expect(ingestCalls).to.equal(2);
+      expect(ingestCalls).to.equal(1);
     } finally {
       await close();
     }

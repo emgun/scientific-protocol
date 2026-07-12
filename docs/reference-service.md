@@ -16,6 +16,12 @@ artifacts remain authoritative.
 The API process defaults `SP_RUN_MIGRATIONS=false`. Apply migrations as an explicit release job
 before replacing service instances.
 
+Remote write-enabled instances require `SP_RATE_LIMIT_BACKEND=postgres`, so limits are atomic
+across replicas. Public services marked `SP_PUBLIC_SERVICE=true` refuse funds-moving private keys,
+cloud credentials, and reference-canary mode. Outbound artifact and webhook requests resolve and
+validate destinations, reject private/special networks, cap redirects and response bytes, and time
+out.
+
 ## Commands
 
 After installing `scientific-protocol@0.3.0`:
@@ -30,6 +36,11 @@ SP_SERVICE_MODE=write-enabled scientific-protocol-service worker review
 SP_SERVICE_MODE=write-enabled scientific-protocol-service worker replication
 SP_SERVICE_MODE=write-enabled scientific-protocol-service worker artifact-maintenance
 ```
+
+For indexer reorg recovery, rebuild into a fresh isolated database with
+`npm run indexer:rebuild:fresh`; see [read-model-reorg-recovery.md](./read-model-reorg-recovery.md).
+Service-assisted publication is also intentionally staged; see
+[claim-publication-bond-flow.md](./claim-publication-bond-flow.md).
 
 `GET /livez` reports process liveness, service mode, package version, source revision, and build
 date without requiring database, RPC, or signer access. `GET /readyz` verifies that the configured
