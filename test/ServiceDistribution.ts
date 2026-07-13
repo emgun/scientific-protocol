@@ -42,9 +42,16 @@ describe("reference service distribution", () => {
     expect(dockerfile).to.include("FROM node:22-bookworm-slim AS build");
     expect(dockerfile).to.include("FROM node:22-bookworm-slim AS runtime");
     expect(dockerfile).to.include("npm ci --omit=dev --ignore-scripts");
+    expect(dockerfile).to.include("apt-get install --yes --no-install-recommends");
+    expect(dockerfile).to.match(/\n\s+ca-certificates \\\n\s+git \\/u);
+    expect(dockerfile).to.include("rm -rf /var/lib/apt/lists/*");
     expect(dockerfile).to.include("USER node");
     expect(dockerfile).to.include("HEALTHCHECK");
     expect(dockerfile).to.include('CMD ["node", "dist/service/cli.js", "healthcheck"]');
     expect(dockerfile).to.include("org.opencontainers.image.revision=$REVISION");
+    const workflow = await readFile(".github/workflows/ci.yml", "utf8");
+    expect(workflow).to.include(
+      "docker run --rm --entrypoint git scientific-protocol-service:pr --version",
+    );
   });
 });

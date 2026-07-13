@@ -95,6 +95,8 @@ not the authority boundary.
 - Outbound HTTP transport pins every redirect hop to the exact DNS addresses that passed validation.
 - Repository ingestion passes the validated address to Git/libcurl and persists that pin in the
   partial clone, so later promisor-object reads cannot independently re-resolve the hostname.
+  The release image explicitly carries Git and CA certificates so this path does not depend on
+  undeclared host tooling.
 - Exact source-submit recovery binds one request hash to one submission row. Accepted replays
   reconstruct that row without consuming quotas or rewriting acceptance; pending and rejected
   replays remain fenced and consume the configured client, actor, and canonical-source limits.

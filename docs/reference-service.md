@@ -58,7 +58,12 @@ docker build \
   --build-arg CREATED="$(git show -s --format=%cI)" \
   -t scientific-protocol-service:0.3.0 .
 docker run --rm scientific-protocol-service:0.3.0 help
+docker run --rm --entrypoint git scientific-protocol-service:0.3.0 --version
 ```
+
+The runtime image explicitly installs Debian `git` and CA certificates because safe repository
+ingestion invokes Git with a validated libcurl address pin. It uses `--no-install-recommends` and
+removes apt metadata after installation.
 
 Tagged releases publish two non-floating GHCR tags:
 
