@@ -45,9 +45,15 @@
     "./schemas/artifact-storage-bundle": "./schemas/artifact-storage-bundle.schema.json"
   },
   "files": [
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "SECURITY.md",
     "dist",
     "docs/claim-publication-bond-flow.md",
+    "docs/migrations/0.3.0.md",
     "docs/read-model-reorg-recovery.md",
+    "docs/reference-service.md",
+    "docs/release.md",
     "docs/run-your-own-gateway.md",
     "docs/subgraph.md",
     "examples/external-agent",

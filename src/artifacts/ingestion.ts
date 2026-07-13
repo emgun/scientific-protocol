@@ -665,7 +665,10 @@ export function buildPinnedGitCloneArgs(input: {
   const port =
     input.repositoryUrl.port || (input.repositoryUrl.protocol === "https:" ? "443" : "80");
   const pinnedAddress = input.family === 6 ? `[${input.address}]` : input.address;
-  const resolveConfig = `http.curloptResolve=+${hostname}:${port}:${pinnedAddress}`;
+  // A leading `+` makes libcurl expire the entry after one minute, at which
+  // point a partial clone can silently fall back to DNS. Keep this entry
+  // permanent for the lifetime of the disposable repository instead.
+  const resolveConfig = `http.curloptResolve=${hostname}:${port}:${pinnedAddress}`;
   const cloneArgs = ["-c", "http.followRedirects=false"];
   if (isIP(hostname) === 0) cloneArgs.push("-c", resolveConfig);
   cloneArgs.push(

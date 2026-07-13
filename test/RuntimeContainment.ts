@@ -67,9 +67,9 @@ describe("RuntimeContainment", () => {
       repositoryUrl: new URL("https://code.example/research/protocol.git"),
       repoPath: "/tmp/repository",
     });
-    expect(args).to.include("http.curloptResolve=+code.example:443:93.184.216.34");
+    expect(args).to.include("http.curloptResolve=code.example:443:93.184.216.34");
     expect(
-      args.filter((entry) => entry === "http.curloptResolve=+code.example:443:93.184.216.34"),
+      args.filter((entry) => entry === "http.curloptResolve=code.example:443:93.184.216.34"),
     ).to.have.length(2);
     expect(args.filter((entry) => entry === "http.followRedirects=false")).to.have.length(2);
     expect(args).to.include("http.followRedirects=false");
@@ -85,7 +85,7 @@ describe("RuntimeContainment", () => {
       repositoryUrl: new URL("https://code.example/research/protocol.git"),
       repoPath: "/tmp/repository",
     });
-    expect(ipv6).to.include("http.curloptResolve=+code.example:443:[2606:4700:4700::1111]");
+    expect(ipv6).to.include("http.curloptResolve=code.example:443:[2606:4700:4700::1111]");
     const literal = buildPinnedGitCloneArgs({
       address: "2606:4700:4700::1111",
       family: 6,

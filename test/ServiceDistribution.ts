@@ -54,4 +54,19 @@ describe("reference service distribution", () => {
       "docker run --rm --entrypoint git scientific-protocol-service:pr --version",
     );
   });
+
+  it("publishes only a reviewed signed tag and proves the container is public", async () => {
+    const workflow = await readFile(".github/workflows/release.yml", "utf8");
+    const allowedSigners = await readFile("ops/release-allowed-signers", "utf8");
+
+    expect(workflow).to.include('verify-tag "$release_ref"');
+    expect(workflow).to.include('main_commit="$(git rev-parse origin/main)"');
+    expect(workflow).to.include("Release tag $release_ref must point to reviewed origin/main");
+    expect(workflow).to.include("Verify anonymous container pull");
+    expect(workflow).to.include('DOCKER_CONFIG="$clean_config" docker buildx imagetools inspect');
+    expect(workflow).to.include("needs: verify-public-container");
+    expect(allowedSigners).to.match(
+      /^emerygunselman@gmail\.com namespaces="git" ssh-ed25519 [A-Za-z0-9+/=]+\n$/u,
+    );
+  });
 });

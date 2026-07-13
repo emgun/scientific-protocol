@@ -42,6 +42,8 @@ jobs:
       - name: Checkout release ref
         uses: actions/checkout@v7
         with:
+          fetch-depth: 0
+          fetch-tags: true
           ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Setup Node
@@ -80,6 +82,21 @@ jobs:
             echo "$package_name@$package_version is already published"
             exit 1
           fi
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          test "$(git cat-file -t "refs/tags/$release_ref")" = "tag"
+          git -c gpg.format=ssh \
+            -c gpg.ssh.allowedSignersFile=ops/release-allowed-signers \
+            verify-tag "$release_ref"
+          tag_commit="$(git rev-list -n 1 "$release_ref")"
+          main_commit="$(git rev-parse origin/main)"
+          if [ "$tag_commit" != "$main_commit" ]; then
+            echo "Release tag $release_ref must point to reviewed origin/main $main_commit"
+            exit 1
+          fi
+          if grep -F "## [$package_version] — Unreleased" CHANGELOG.md; then
+            echo "CHANGELOG.md must date $package_version before publication"
+            exit 1
+          fi
 
       - name: Validate environment
         run: npm run validate:env
@@ -116,6 +133,9 @@ jobs:
       packages: write
       id-token: write
       attestations: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+      version: ${{ steps.release.outputs.version }}
     steps:
       - name: Checkout release ref
         uses: actions/checkout@v7
@@ -166,9 +186,31 @@ jobs:
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
 
+  verify-public-container:
+    name: Verify anonymous container pull
+    needs: publish-container
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Verify the released image is public by immutable digest
+        env:
+          IMAGE: ghcr.io/emgun/scientific-protocol-service@${{ needs.publish-container.outputs.digest }}
+        run: |
+          clean_config="$(mktemp -d)"
+          trap 'rm -rf "$clean_config"' EXIT
+          for attempt in $(seq 1 12); do
+            if DOCKER_CONFIG="$clean_config" docker buildx imagetools inspect "$IMAGE"; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "GHCR image is not anonymously pullable. Confirm the package identity, make it public, and re-run failed jobs."
+          exit 1
+
   github-release:
     name: Create GitHub Release
-    needs: publish-container
+    needs: verify-public-container
     runs-on: ubuntu-latest
     permissions:
       contents: write

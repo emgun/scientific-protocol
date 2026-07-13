@@ -125,6 +125,29 @@ describe("protocol package boundary", () => {
     }
   });
 
+  it("packages every repository-relative document linked from the installed README", () => {
+    const packageJson = loadPackageJson();
+    const files = packageJson.files ?? [];
+    const readme = readFileSync("README.md", "utf8");
+    const relativeLinks = [
+      ...readme.matchAll(/\[[^\]]+\]\((?!https?:\/\/)([^)#?]+)(?:[?#][^)]*)?\)/gu),
+    ]
+      .map((match) => path.normalize((match[1] ?? "").replace(/^\.\//u, "")))
+      .filter(Boolean);
+
+    for (const linkedPath of relativeLinks) {
+      const included = files.some((entry) => {
+        const normalizedEntry = path.normalize(entry.replace(/^\.\//u, ""));
+        return (
+          linkedPath === normalizedEntry || linkedPath.startsWith(`${normalizedEntry}${path.sep}`)
+        );
+      });
+      expect(included, `README link ${linkedPath} is absent from package.json files`).to.equal(
+        true,
+      );
+    }
+  });
+
   it("keeps SDK entrypoints independent of service runtime packages", () => {
     const packageJson = loadPackageJson();
     const entrypoints = Object.entries(packageJson.exports ?? {})

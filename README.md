@@ -13,7 +13,7 @@ indexers, APIs, workers, and storage services remain replaceable node infrastruc
 ## Quickstart (10 minutes)
 
 Every gateway command below is exercised by a daily CI smoke against the live gateway
-([gateway-smoke.yml](.github/workflows/gateway-smoke.yml)) — if it is in this section, it works.
+([gateway-smoke.yml](https://github.com/emgun/scientific-protocol/blob/main/.github/workflows/gateway-smoke.yml)) — if it is in this section, it works.
 
 **1. Read protocol state — no install, no key, no account:**
 
