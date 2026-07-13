@@ -890,7 +890,7 @@ async function applyChunk(
       await applyForecastSettlement(
         client,
         event.args.forecastId.toString(),
-        event.args.resolutionDecisionId.toString(),
+        event.args.resolutionDecisionId === 0n ? null : event.args.resolutionDecisionId.toString(),
         Number(event.args.finalStatus),
         event.args.matched,
         event.args.payoutAmount.toString(),

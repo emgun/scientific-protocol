@@ -8970,7 +8970,7 @@ describe("ApiServer", () => {
             direction: 1,
             confidenceBps: 7500,
             effectiveDecisionIdAtCommit: "8",
-            resolutionDecisionId: "9",
+            resolutionDecisionId: null,
             finalStatus: options.finalStatus ?? 2,
             matched: false,
             payoutAmount: "0",
@@ -8997,7 +8997,7 @@ describe("ApiServer", () => {
       expect(payload.items[0].settled).to.equal(true);
       expect(payload.items[0].finalStatus).to.equal(2);
       expect(payload.items[0].effectiveDecisionIdAtCommit).to.equal("8");
-      expect(payload.items[0].resolutionDecisionId).to.equal("9");
+      expect(payload.items[0].resolutionDecisionId).to.equal(null);
     } finally {
       await close();
     }

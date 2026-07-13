@@ -935,7 +935,7 @@ export async function markEffectiveResolutionDecision(
 export async function applyForecastSettlement(
   client: PoolClient,
   forecastId: string,
-  resolutionDecisionId: string,
+  resolutionDecisionId: string | null,
   finalStatus: number,
   matched: boolean,
   payoutAmount: string,

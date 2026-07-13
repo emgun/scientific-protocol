@@ -8,7 +8,12 @@ import { expect } from "chai";
 import { consumeConfiguredRateLimit } from "../src/api/rate-limit.js";
 import type { ArtifactDraftInput, ArtifactIngestionResult } from "../src/artifacts/ingestion.js";
 import { upsertPersistedArtifact } from "../src/coordinator/store.js";
-import { migrateReadModelDb, readForecast, upsertForecast } from "../src/indexer/store.js";
+import {
+  applyForecastSettlement,
+  migrateReadModelDb,
+  readForecast,
+  upsertForecast,
+} from "../src/indexer/store.js";
 import {
   assertPublicWriteRequestExecution,
   insertPublicWriteRequest,
@@ -986,6 +991,111 @@ describe("source ingress", { skip: database.skipReason }, () => {
       expect(await readForecast(pool, "905")).to.include({
         effectiveDecisionIdAtCommit: "903",
         resolutionDecisionId: "904",
+      });
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it("stores terminal forecast settlements without a resolution-decision foreign key", async () => {
+    const pool = await prepareSourceStore();
+    const idBase = 1_000_000_000 + (Number.parseInt(randomUUID().slice(0, 8), 16) % 800_000_000);
+    const claimId = String(idBase);
+    const forecastBase = BigInt(idBase + 1);
+    const forecastIds = {
+      forfeited: (forecastBase + 1n).toString(),
+      reclaimed: (forecastBase + 2n).toString(),
+      resolved: (forecastBase + 3n).toString(),
+    };
+    const replicationId = (forecastBase + 4n).toString();
+    const decisionId = (forecastBase + 5n).toString();
+    const author = `0x${"d1".repeat(20)}`;
+    const resolutionModule = `0x${"d2".repeat(20)}`;
+
+    try {
+      await pool.query(
+        `INSERT INTO claims (
+           claim_id, author, domain_id, metadata_hash, resolution_module, status, created_at_block
+         ) VALUES ($1, $2, 1, $3, $4, 1, 1)`,
+        [claimId, author, `0x${"d3".repeat(32)}`, resolutionModule],
+      );
+      await pool.query(
+        `INSERT INTO replications (
+           replication_id, claim_id, replicator, agent_id, result_hash
+         ) VALUES ($1, $2, $3, '0', $4)`,
+        [replicationId, claimId, author, `0x${"d4".repeat(32)}`],
+      );
+      await pool.query(
+        `INSERT INTO resolution_decisions (
+           decision_id, claim_id, replication_id, resolution_module, status, claim_status,
+           confidence_bps, resolution_hash, evidence_hash, resolver_type, created_at, actor,
+           effective
+         ) VALUES ($1, $2, $3, $4, 1, 1, 8000, $5, $6, 1, 2, $7, TRUE)`,
+        [
+          decisionId,
+          claimId,
+          replicationId,
+          resolutionModule,
+          `0x${"d5".repeat(32)}`,
+          `0x${"d6".repeat(32)}`,
+          author,
+        ],
+      );
+
+      const client = await pool.connect();
+      try {
+        for (const forecastId of Object.values(forecastIds)) {
+          await upsertForecast(client, {
+            forecastId,
+            claimId,
+            forecaster: author,
+            agentId: "0",
+            commitmentHash: `0x${"d7".repeat(32)}`,
+            stakeAmount: "100",
+            committedAt: 1,
+            revealDeadline: 2,
+            revealed: forecastId !== forecastIds.forfeited,
+            settled: false,
+            direction: 1,
+            confidenceBps: 7500,
+            effectiveDecisionIdAtCommit: null,
+            resolutionDecisionId: null,
+            finalStatus: null,
+            matched: null,
+            payoutAmount: null,
+          });
+        }
+
+        // Permissionless forfeit emits the onchain zero sentinel.
+        await applyForecastSettlement(client, forecastIds.forfeited, "0", 0, false, "0");
+        // Reclaim is normalized by the projector before it reaches storage.
+        await applyForecastSettlement(client, forecastIds.reclaimed, null, 0, false, "100");
+        // Decision-backed settlement must preserve its foreign-key linkage.
+        await applyForecastSettlement(client, forecastIds.resolved, decisionId, 1, true, "125");
+      } finally {
+        client.release();
+      }
+
+      expect(await readForecast(pool, forecastIds.forfeited)).to.include({
+        settled: true,
+        resolutionDecisionId: null,
+        finalStatus: 0,
+        matched: false,
+        payoutAmount: "0",
+      });
+      expect(await readForecast(pool, forecastIds.reclaimed)).to.include({
+        settled: true,
+        resolutionDecisionId: null,
+        finalStatus: 0,
+        matched: false,
+        payoutAmount: "100",
+      });
+      expect(await readForecast(pool, forecastIds.resolved)).to.include({
+        settled: true,
+        resolutionDecisionId: decisionId,
+        finalStatus: 1,
+        matched: true,
+        payoutAmount: "125",
       });
     } finally {
       await pool.end();

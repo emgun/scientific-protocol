@@ -35,3 +35,13 @@ replay cannot remove orphaned fork records. Automatic rewind requires a migratio
 provenance to every chain-derived row and changes operated references to preservation-safe linkage.
 Until that migration is designed and deployed, use a fresh rebuild, preserve the old database, and
 reconcile operated records explicitly before moving write traffic.
+
+## Terminal forecast settlement
+
+`ForecastSettled` uses resolution decision ID `0` for terminal paths that do not depend on a claim
+decision, including permissionless forfeiture and delayed reclaim. The projector normalizes that
+sentinel to SQL `NULL`; the store repeats the normalization as a defensive boundary check. A
+nonzero decision ID remains an ordinary foreign-key link to `resolution_decisions`.
+
+Forecast snapshots are written before settlement events in each projection transaction. The
+terminal update therefore targets an existing forecast row while preserving event-order semantics.
