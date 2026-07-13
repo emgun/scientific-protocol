@@ -82,7 +82,8 @@ abstract contract ProtocolDeployer is Test {
         bondEscrow = new BondEscrow(
             address(accessController),
             address(claimRegistry),
-            address(replicationRegistry)
+            address(replicationRegistry),
+            treasury
         );
         claimRegistry.configureProtocolDependencies(
             address(bondEscrow),
@@ -159,6 +160,7 @@ abstract contract ProtocolDeployer is Test {
         accessController.grantRole(ProtocolRoles.CHECKPOINT_PUBLISHER_ROLE, account);
         accessController.grantRole(ProtocolRoles.MODULE_ADMIN_ROLE, account);
         accessController.grantRole(ProtocolRoles.ESCROW_ADMIN_ROLE, account);
+        accessController.grantRole(ProtocolRoles.BOUNTY_SETTLER_ROLE, account);
         accessController.grantRole(ProtocolRoles.AGENT_BUDGET_MANAGER_ROLE, account);
         accessController.grantRole(ProtocolRoles.MARKET_SETTLER_ROLE, account);
         accessController.grantRole(ProtocolRoles.COURT_ROLE, account);

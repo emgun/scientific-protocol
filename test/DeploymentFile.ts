@@ -4,7 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { expect } from "chai";
-import { resolveMinimumAuthorBondWei } from "../script/deploy-protocol.js";
+import {
+  CHECKPOINT_OPERATOR_ROLES,
+  CLAIM_SUBMITTER_OPERATOR_ROLES,
+  LOCAL_DEPLOYMENT_BOOTSTRAP_ROLES,
+  RESOLVER_OPERATOR_ROLES,
+  resolveMinimumAuthorBondWei,
+  TIMELOCK_MANAGED_ROLES,
+} from "../script/deploy-protocol.js";
 import {
   type DeploymentFile,
   deploymentFileExists,
@@ -43,6 +50,21 @@ const sampleDeployment: DeploymentFile = {
 };
 
 describe("DeploymentFile", () => {
+  it("keeps author-bond custody timelocked and bounty settlement operational", () => {
+    expect(LOCAL_DEPLOYMENT_BOOTSTRAP_ROLES).not.to.include("ESCROW_ADMIN_ROLE");
+    expect(RESOLVER_OPERATOR_ROLES).to.include("BOUNTY_SETTLER_ROLE");
+    expect(RESOLVER_OPERATOR_ROLES).not.to.include("ESCROW_ADMIN_ROLE");
+    expect(TIMELOCK_MANAGED_ROLES).to.include("ESCROW_ADMIN_ROLE");
+    expect(CLAIM_SUBMITTER_OPERATOR_ROLES).to.deep.equal(["CLAIM_SUBMITTER_ROLE"]);
+    expect(CHECKPOINT_OPERATOR_ROLES).to.deep.equal([
+      "CHECKPOINT_PUBLISHER_ROLE",
+      "REWARD_SETTLER_ROLE",
+    ]);
+    expect(new Set(LOCAL_DEPLOYMENT_BOOTSTRAP_ROLES).size).to.equal(
+      LOCAL_DEPLOYMENT_BOOTSTRAP_ROLES.length,
+    );
+  });
+
   it("uses one explicit nonzero author-bond floor for remote deployments", () => {
     expect(() => resolveMinimumAuthorBondWei({})).to.throw(/require SP_MIN_AUTHOR_BOND/);
     expect(resolveMinimumAuthorBondWei({}, { localDevelopment: true })).to.equal(

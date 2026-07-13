@@ -147,7 +147,7 @@ contract EscrowHandler is Test {
         }
         uint256 amount = STEP * bound(amountSeed, 1, available / STEP);
         vm.prank(admin);
-        bondEscrow.slashAuthorBond(claimId, amount, address(0xBEEF));
+        bondEscrow.slashAuthorBond(claimId, amount);
     }
 
     function refundAuthorBond(uint256 amountSeed) external {
@@ -157,7 +157,7 @@ contract EscrowHandler is Test {
         }
         uint256 amount = STEP * bound(amountSeed, 1, available / STEP);
         vm.prank(admin);
-        bondEscrow.refundAuthorBond(claimId, amount, author);
+        bondEscrow.refundAuthorBond(claimId, amount);
     }
 
     function progressClaimStatus(uint8 choice) external {
@@ -193,11 +193,12 @@ interface BondEscrowLike {
     function bountyBalances(uint256 claimId) external view returns (uint256);
     function reservedBountyBalances(uint256 claimId) external view returns (uint256);
     function authorBondBalances(uint256 claimId) external view returns (uint256);
+    function slashRecipient() external view returns (address);
     function reserveBountyPayout(uint256 claimId, uint256 replicationId, uint256 amount) external;
     function releaseReservedPayout(uint256 claimId, uint256 replicationId) external;
     function cancelReservedPayout(uint256 claimId, uint256 replicationId) external;
-    function slashAuthorBond(uint256 claimId, uint256 amount, address recipient) external;
-    function refundAuthorBond(uint256 claimId, uint256 amount, address recipient) external;
+    function slashAuthorBond(uint256 claimId, uint256 amount) external;
+    function refundAuthorBond(uint256 claimId, uint256 amount) external;
     function getReservation(
         uint256 claimId,
         uint256 replicationId

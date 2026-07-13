@@ -9,6 +9,7 @@ library ProtocolRoles {
     bytes32 internal constant CHECKPOINT_PUBLISHER_ROLE = keccak256("CHECKPOINT_PUBLISHER_ROLE");
     bytes32 internal constant MODULE_ADMIN_ROLE = keccak256("MODULE_ADMIN_ROLE");
     bytes32 internal constant ESCROW_ADMIN_ROLE = keccak256("ESCROW_ADMIN_ROLE");
+    bytes32 internal constant BOUNTY_SETTLER_ROLE = keccak256("BOUNTY_SETTLER_ROLE");
     bytes32 internal constant AGENT_BUDGET_MANAGER_ROLE = keccak256("AGENT_BUDGET_MANAGER_ROLE");
     bytes32 internal constant MARKET_SETTLER_ROLE = keccak256("MARKET_SETTLER_ROLE");
     bytes32 internal constant REWARD_SETTLER_ROLE = keccak256("REWARD_SETTLER_ROLE");

@@ -5,24 +5,34 @@ import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {Test} from "forge-std/Test.sol";
 import {ProtocolDeployer} from "./utils/ProtocolDeployer.sol";
 import {AppealsRegistry} from "../contracts/AppealsRegistry.sol";
+import {ClaimRegistry} from "../contracts/ClaimRegistry.sol";
 import {EpistemicMarket} from "../contracts/EpistemicMarket.sol";
 import {ProtocolTypes} from "../contracts/libraries/ProtocolTypes.sol";
 
 contract MarketHandler is Test {
     EpistemicMarket internal immutable market;
+    ClaimRegistry internal immutable claimRegistry;
     address internal immutable admin;
-    uint256 internal immutable claimId;
-    uint256 internal immutable resolutionDecisionId;
+    uint256 public immutable claimId;
+    uint256 internal immutable replicationId;
+    uint256 internal resolutionDecisionId;
 
     mapping(uint256 forecastId => bytes32 salt) internal salts;
     mapping(uint256 forecastId => ProtocolTypes.ForecastDirection direction) internal directions;
     mapping(uint256 forecastId => uint16 confidenceBps) internal confidences;
 
-    constructor(address market_, address admin_, uint256 claimId_, uint256 resolutionDecisionId_) {
+    constructor(
+        address market_,
+        address claimRegistry_,
+        address admin_,
+        uint256 claimId_,
+        uint256 replicationId_
+    ) {
         market = EpistemicMarket(market_);
+        claimRegistry = ClaimRegistry(claimRegistry_);
         admin = admin_;
         claimId = claimId_;
-        resolutionDecisionId = resolutionDecisionId_;
+        replicationId = replicationId_;
     }
 
     receive() external payable {}
@@ -33,6 +43,14 @@ contract MarketHandler is Test {
     }
 
     function commitForecast(uint256 seed) external {
+        ProtocolTypes.ClaimStatus status = claimRegistry.getClaim(claimId).status;
+        if (
+            status == ProtocolTypes.ClaimStatus.Refuted ||
+            status == ProtocolTypes.ClaimStatus.Fraudulent ||
+            status == ProtocolTypes.ClaimStatus.Deprecated
+        ) {
+            return;
+        }
         uint256 stake = bound(seed, 0.01 ether, 1 ether);
         uint256 forecastId = market.nextForecastId();
         bytes32 salt = keccak256(abi.encodePacked("salt", forecastId));
@@ -49,6 +67,14 @@ contract MarketHandler is Test {
             uint64(block.timestamp + bound(seed, 1 hours, 7 days)),
             0
         );
+    }
+
+    function finalizeDecision() external {
+        if (resolutionDecisionId != 0) {
+            return;
+        }
+        vm.prank(admin);
+        resolutionDecisionId = claimRegistry.finalizeClaimResolution(claimId, replicationId);
     }
 
     function revealForecast(uint256 forecastSeed) external {
@@ -70,11 +96,14 @@ contract MarketHandler is Test {
 
     function settleForecast(uint256 forecastSeed) external {
         uint256 forecastId = _pickForecast(forecastSeed);
-        if (forecastId == 0) {
+        if (forecastId == 0 || resolutionDecisionId == 0) {
             return;
         }
         EpistemicMarket.ForecastCommitment memory forecast = market.getForecast(forecastId);
         if (forecast.settled) {
+            return;
+        }
+        if (resolutionDecisionId <= forecast.effectiveDecisionIdAtCommit) {
             return;
         }
         if (!forecast.revealed && block.timestamp <= forecast.revealDeadline) {
@@ -182,8 +211,6 @@ contract MarketHandler is Test {
 
 contract MarketInvariantTest is StdInvariant, ProtocolDeployer {
     MarketHandler internal handler;
-    uint256 internal canonicalDecisionId;
-
     function setUp() public {
         deployProtocol();
         uint256 claimId = createPublishedClaim(uint64(DOMAIN_COMPUTATIONAL), 1 ether);
@@ -210,10 +237,13 @@ contract MarketInvariantTest is StdInvariant, ProtocolDeployer {
                 evidenceURI: "ipfs://market-resolution"
             })
         );
-        vm.prank(admin);
-        canonicalDecisionId = claimRegistry.finalizeClaimResolution(claimId, replicationId);
-
-        handler = new MarketHandler(address(epistemicMarket), admin, claimId, canonicalDecisionId);
+        handler = new MarketHandler(
+            address(epistemicMarket),
+            address(claimRegistry),
+            admin,
+            claimId,
+            replicationId
+        );
         vm.deal(address(handler), 1_000 ether);
         targetContract(address(handler));
     }
@@ -230,6 +260,12 @@ contract MarketInvariantTest is StdInvariant, ProtocolDeployer {
     /// @dev The decision consumed by the market must remain an exact append-only copy of the
     /// resolved replication, never a second independently writable outcome.
     function invariant_MarketDecisionMatchesResolvedReplication() public view {
+        uint256 canonicalDecisionId = claimRegistry.getEffectiveResolutionDecisionId(
+            handler.claimId()
+        );
+        if (canonicalDecisionId == 0) {
+            return;
+        }
         ProtocolTypes.ResolutionDecision memory decision = claimRegistry.getResolutionDecision(
             canonicalDecisionId
         );
@@ -246,6 +282,18 @@ contract MarketInvariantTest is StdInvariant, ProtocolDeployer {
             claimRegistry.getLatestResolutionDecisionId(decision.claimId),
             canonicalDecisionId
         );
+    }
+    /// @dev Every accepted forecast snapshots an earlier decision than the one used at settlement.
+    function invariant_NoForecastSettlesAgainstItsCommitSnapshot() public view {
+        uint256 nextForecastId = epistemicMarket.nextForecastId();
+        for (uint256 forecastId = 1; forecastId < nextForecastId; forecastId++) {
+            EpistemicMarket.ForecastCommitment memory forecast = epistemicMarket.getForecast(
+                forecastId
+            );
+            if (forecast.settled && forecast.resolutionDecisionId != 0) {
+                assertGt(forecast.resolutionDecisionId, forecast.effectiveDecisionIdAtCommit);
+            }
+        }
     }
 }
 

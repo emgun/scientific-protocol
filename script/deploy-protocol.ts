@@ -53,12 +53,35 @@ export const LOCAL_DEPLOYMENT_BOOTSTRAP_ROLES = [
   "RESOLVER_ROLE",
   "CHECKPOINT_PUBLISHER_ROLE",
   "MODULE_ADMIN_ROLE",
-  "ESCROW_ADMIN_ROLE",
+  "BOUNTY_SETTLER_ROLE",
   "AGENT_BUDGET_MANAGER_ROLE",
   "MARKET_SETTLER_ROLE",
   "REWARD_SETTLER_ROLE",
   "COURT_ROLE",
   "PAUSER_ROLE",
+] as const;
+
+export const RESOLVER_OPERATOR_ROLES = [
+  "RESOLVER_ROLE",
+  "BOUNTY_SETTLER_ROLE",
+  "AGENT_BUDGET_MANAGER_ROLE",
+  "MARKET_SETTLER_ROLE",
+  "REWARD_SETTLER_ROLE",
+  "COURT_ROLE",
+  "PAUSER_ROLE",
+] as const;
+
+export const CLAIM_SUBMITTER_OPERATOR_ROLES = ["CLAIM_SUBMITTER_ROLE"] as const;
+
+export const CHECKPOINT_OPERATOR_ROLES = [
+  "CHECKPOINT_PUBLISHER_ROLE",
+  "REWARD_SETTLER_ROLE",
+] as const;
+
+export const TIMELOCK_MANAGED_ROLES = [
+  "PARAMETER_ADMIN_ROLE",
+  "MODULE_ADMIN_ROLE",
+  "ESCROW_ADMIN_ROLE",
 ] as const;
 
 function getContractFactory(name: ArtifactName, signer: ContractRunner): ContractFactory {
@@ -184,6 +207,10 @@ export async function deployLocalFromEnv(env: NodeJS.ProcessEnv = process.env): 
     ["SP_REPLICATION_SUBMITTER_PRIVATE_KEY", "SP_OPERATOR_PRIVATE_KEY"],
     { env, localAccountIndex: 3 },
   );
+  const claimSubmitter = createManagedOperatorSigner(
+    ["SP_CLAIM_SUBMITTER_PRIVATE_KEY", "SP_OPERATOR_PRIVATE_KEY"],
+    { env, localAccountIndex: 2 },
+  );
   const resolverOperator = createManagedOperatorSigner(
     ["SP_RESOLVER_PRIVATE_KEY", "SP_OPERATOR_PRIVATE_KEY"],
     { env, localAccountIndex: 4 },
@@ -194,6 +221,7 @@ export async function deployLocalFromEnv(env: NodeJS.ProcessEnv = process.env): 
   );
   const deployerAddress = await deployer.getAddress();
   const replicationSubmitterAddress = await replicationSubmitter.getAddress();
+  const claimSubmitterAddress = await claimSubmitter.getAddress();
   const resolverOperatorAddress = await resolverOperator.getAddress();
   const checkpointPublisherAddress = await checkpointPublisher.getAddress();
   const DEFAULT_ADMIN_ROLE = "0x0000000000000000000000000000000000000000000000000000000000000000";
@@ -201,6 +229,7 @@ export async function deployLocalFromEnv(env: NodeJS.ProcessEnv = process.env): 
   const bootstrapVoteRecipients = sumBootstrapAllocations([
     { account: deployerAddress, amount: governanceConfig.bootstrapVoteAmount },
     { account: replicationSubmitterAddress, amount: governanceConfig.bootstrapVoteAmount },
+    { account: claimSubmitterAddress, amount: governanceConfig.bootstrapVoteAmount },
     { account: resolverOperatorAddress, amount: governanceConfig.bootstrapVoteAmount },
     { account: checkpointPublisherAddress, amount: governanceConfig.bootstrapVoteAmount },
   ]);
@@ -226,41 +255,21 @@ export async function deployLocalFromEnv(env: NodeJS.ProcessEnv = process.env): 
       ).wait();
     }
 
-    await (
-      await accessController.grantRole(
-        ROLE("RESOLVER_ROLE"),
-        resolverOperatorAddress,
-        setupTxOverrides,
-      )
-    ).wait();
-    await (
-      await accessController.grantRole(
-        ROLE("ESCROW_ADMIN_ROLE"),
-        resolverOperatorAddress,
-        setupTxOverrides,
-      )
-    ).wait();
-    await (
-      await accessController.grantRole(
-        ROLE("REWARD_SETTLER_ROLE"),
-        resolverOperatorAddress,
-        setupTxOverrides,
-      )
-    ).wait();
-    await (
-      await accessController.grantRole(
-        ROLE("CHECKPOINT_PUBLISHER_ROLE"),
-        checkpointPublisherAddress,
-        setupTxOverrides,
-      )
-    ).wait();
-    await (
-      await accessController.grantRole(
-        ROLE("REWARD_SETTLER_ROLE"),
-        checkpointPublisherAddress,
-        setupTxOverrides,
-      )
-    ).wait();
+    for (const role of RESOLVER_OPERATOR_ROLES) {
+      await (
+        await accessController.grantRole(ROLE(role), resolverOperatorAddress, setupTxOverrides)
+      ).wait();
+    }
+    for (const role of CLAIM_SUBMITTER_OPERATOR_ROLES) {
+      await (
+        await accessController.grantRole(ROLE(role), claimSubmitterAddress, setupTxOverrides)
+      ).wait();
+    }
+    for (const role of CHECKPOINT_OPERATOR_ROLES) {
+      await (
+        await accessController.grantRole(ROLE(role), checkpointPublisherAddress, setupTxOverrides)
+      ).wait();
+    }
 
     const ProtocolParameters = getContractFactory("ProtocolParameters", deployer);
     const protocolParameters = (await ProtocolParameters.deploy(
@@ -377,11 +386,19 @@ export async function deployLocalFromEnv(env: NodeJS.ProcessEnv = process.env): 
     )) as UntypedContract;
     await replicationRegistry.waitForDeployment();
 
+    const ProtocolTreasury = getContractFactory("ProtocolTreasury", deployer);
+    const protocolTreasury = (await ProtocolTreasury.deploy(
+      deployerAddress,
+      deployTxOverrides,
+    )) as UntypedContract;
+    await protocolTreasury.waitForDeployment();
+
     const BondEscrow = getContractFactory("BondEscrow", deployer);
     const bondEscrow = (await BondEscrow.deploy(
       await accessController.getAddress(),
       await claimRegistry.getAddress(),
       await replicationRegistry.getAddress(),
+      await protocolTreasury.getAddress(),
       deployTxOverrides,
     )) as UntypedContract;
     await bondEscrow.waitForDeployment();
@@ -405,13 +422,6 @@ export async function deployLocalFromEnv(env: NodeJS.ProcessEnv = process.env): 
       deployTxOverrides,
     )) as UntypedContract;
     await reputationCheckpointRegistry.waitForDeployment();
-
-    const ProtocolTreasury = getContractFactory("ProtocolTreasury", deployer);
-    const protocolTreasury = (await ProtocolTreasury.deploy(
-      deployerAddress,
-      deployTxOverrides,
-    )) as UntypedContract;
-    await protocolTreasury.waitForDeployment();
 
     const EpistemicMarket = getContractFactory("EpistemicMarket", deployer);
     const epistemicMarket = (await EpistemicMarket.deploy(
@@ -511,20 +521,15 @@ export async function deployLocalFromEnv(env: NodeJS.ProcessEnv = process.env): 
         setupTxOverrides,
       )
     ).wait();
-    await (
-      await accessController.grantRole(
-        ROLE("PARAMETER_ADMIN_ROLE"),
-        await protocolTimelock.getAddress(),
-        setupTxOverrides,
-      )
-    ).wait();
-    await (
-      await accessController.grantRole(
-        ROLE("MODULE_ADMIN_ROLE"),
-        await protocolTimelock.getAddress(),
-        setupTxOverrides,
-      )
-    ).wait();
+    for (const role of TIMELOCK_MANAGED_ROLES) {
+      await (
+        await accessController.grantRole(
+          ROLE(role),
+          await protocolTimelock.getAddress(),
+          setupTxOverrides,
+        )
+      ).wait();
+    }
     await (
       await protocolGovernanceToken.transferOwnership(
         await protocolTimelock.getAddress(),
@@ -537,20 +542,11 @@ export async function deployLocalFromEnv(env: NodeJS.ProcessEnv = process.env): 
         setupTxOverrides,
       )
     ).wait();
-    await (
-      await accessController.revokeRole(
-        ROLE("PARAMETER_ADMIN_ROLE"),
-        deployerAddress,
-        setupTxOverrides,
-      )
-    ).wait();
-    await (
-      await accessController.revokeRole(
-        ROLE("MODULE_ADMIN_ROLE"),
-        deployerAddress,
-        setupTxOverrides,
-      )
-    ).wait();
+    for (const role of LOCAL_DEPLOYMENT_BOOTSTRAP_ROLES) {
+      await (
+        await accessController.revokeRole(ROLE(role), deployerAddress, setupTxOverrides)
+      ).wait();
+    }
     await (
       await accessController.revokeRole(DEFAULT_ADMIN_ROLE, deployerAddress, setupTxOverrides)
     ).wait();

@@ -91,6 +91,7 @@ async function deployProtocol() {
     "CHECKPOINT_PUBLISHER_ROLE",
     "MODULE_ADMIN_ROLE",
     "ESCROW_ADMIN_ROLE",
+    "BOUNTY_SETTLER_ROLE",
     "AGENT_BUDGET_MANAGER_ROLE",
     "MARKET_SETTLER_ROLE",
     "REWARD_SETTLER_ROLE",
@@ -186,10 +187,16 @@ async function deployProtocol() {
   await replicationRegistry.waitForDeployment();
 
   const BondEscrow = await ethers.getContractFactory("contracts/BondEscrow.sol:BondEscrow");
+  const ProtocolTreasury = await ethers.getContractFactory(
+    "contracts/ProtocolTreasury.sol:ProtocolTreasury",
+  );
+  const protocolTreasury = await ProtocolTreasury.deploy(admin.address);
+  await protocolTreasury.waitForDeployment();
   const bondEscrow = await BondEscrow.deploy(
     await accessController.getAddress(),
     await claimRegistry.getAddress(),
     await replicationRegistry.getAddress(),
+    await protocolTreasury.getAddress(),
   );
   await bondEscrow.waitForDeployment();
   await (
@@ -222,12 +229,6 @@ async function deployProtocol() {
     await replicationRegistry.getAddress(),
   );
   await epistemicMarket.waitForDeployment();
-
-  const ProtocolTreasury = await ethers.getContractFactory(
-    "contracts/ProtocolTreasury.sol:ProtocolTreasury",
-  );
-  const protocolTreasury = await ProtocolTreasury.deploy(admin.address);
-  await protocolTreasury.waitForDeployment();
 
   const AppealsRegistry = await ethers.getContractFactory(
     "contracts/AppealsRegistry.sol:AppealsRegistry",
@@ -1793,6 +1794,94 @@ describe("ScientificProtocol", () => {
     assert.equal(forecast.resolutionDecisionId, refutedDecisionId);
   });
 
+  it("snapshots claim decisions at forecast commit and rejects hindsight settlement", async () => {
+    const protocol = await deployProtocol();
+    await (
+      await protocol.claimRegistry
+        .connect(protocol.author)
+        .createClaim(
+          makeClaimSummary(protocol.author.address, 1n),
+          ethers.parseEther("0.25"),
+          ethers.ZeroAddress,
+        )
+    ).wait();
+    await satisfyBondAndPublishClaim(protocol, 1);
+    await (
+      await protocol.claimRegistry
+        .connect(protocol.admin)
+        .setClaimStatus(1, CLAIM_STATUS.UnderReplication)
+    ).wait();
+    const priorDecisionId = await createCanonicalResolutionDecision(
+      protocol,
+      1,
+      RESOLUTION_STATUS.Inconclusive,
+    );
+
+    const salt = ethers.keccak256(ethers.toUtf8Bytes("post-inconclusive-forecast"));
+    const commitmentHash = ethers.keccak256(
+      ethers.AbiCoder.defaultAbiCoder().encode(
+        ["uint8", "uint16", "bytes32"],
+        [FORECAST_DIRECTION.Supports, 8_000, salt],
+      ),
+    );
+    const latestBlock = await ethers.provider.getBlock("latest");
+    assert.ok(latestBlock);
+    const commitReceipt = await (
+      await protocol.epistemicMarket
+        .connect(protocol.author)
+        .commitForecast(1, commitmentHash, BigInt(latestBlock.timestamp + 3600), 0, {
+          value: ethers.parseEther("0.1"),
+        })
+    ).wait();
+    assert.ok(commitReceipt);
+    const committedLog = commitReceipt.logs
+      .map((log) => {
+        try {
+          return protocol.epistemicMarket.interface.parseLog(log);
+        } catch {
+          return null;
+        }
+      })
+      .find((parsed) => parsed?.name === "ForecastCommitted");
+    assert.ok(committedLog);
+    assert.equal(committedLog.args.effectiveDecisionIdAtCommit, priorDecisionId);
+    assert.equal(
+      (await protocol.epistemicMarket.getForecast(1)).effectiveDecisionIdAtCommit,
+      priorDecisionId,
+    );
+
+    await (
+      await protocol.epistemicMarket
+        .connect(protocol.author)
+        .revealForecast(1, FORECAST_DIRECTION.Supports, 8_000, salt)
+    ).wait();
+    await assert.rejects(
+      protocol.epistemicMarket.connect(protocol.admin).settleForecast(1, priorDecisionId),
+      /EpistemicMarketDecisionNotNewer/,
+    );
+
+    const newerDecisionId = await createCanonicalResolutionDecision(
+      protocol,
+      1,
+      RESOLUTION_STATUS.Qualified,
+    );
+    await (
+      await protocol.epistemicMarket.connect(protocol.admin).settleForecast(1, newerDecisionId)
+    ).wait();
+    assert.equal((await protocol.epistemicMarket.getForecast(1)).settled, true);
+
+    await createCanonicalResolutionDecision(protocol, 1, RESOLUTION_STATUS.Refuted);
+
+    await assert.rejects(
+      protocol.epistemicMarket
+        .connect(protocol.author)
+        .commitForecast(1, commitmentHash, BigInt(latestBlock.timestamp + 7200), 0, {
+          value: ethers.parseEther("0.1"),
+        }),
+      /EpistemicMarketClaimNotForecastable/,
+    );
+  });
+
   it("maps every resolvable replication status to one canonical claim-status recommendation", async () => {
     const protocol = await deployProtocol();
     const mappings = [
@@ -1955,7 +2044,7 @@ describe("ScientificProtocol", () => {
     await (
       await protocol.bondEscrow
         .connect(protocol.admin)
-        .refundAuthorBond(1, ethers.parseEther("0.05"), protocol.author.address)
+        .refundAuthorBond(1, ethers.parseEther("0.05"))
     ).wait();
 
     await (await protocol.bondEscrow.connect(protocol.other).setDepositsPaused(false)).wait();
@@ -2298,12 +2387,12 @@ describe("ScientificProtocol", () => {
     await (
       await protocol.bondEscrow
         .connect(protocol.admin)
-        .slashAuthorBond(1, ethers.parseEther("0.25"), protocol.other.address)
+        .slashAuthorBond(1, ethers.parseEther("0.25"))
     ).wait();
     await (
       await protocol.bondEscrow
         .connect(protocol.admin)
-        .refundAuthorBond(1, ethers.parseEther("0.25"), protocol.author.address)
+        .refundAuthorBond(1, ethers.parseEther("0.25"))
     ).wait();
 
     let overRefund = false;
@@ -2311,7 +2400,7 @@ describe("ScientificProtocol", () => {
       await (
         await protocol.bondEscrow
           .connect(protocol.admin)
-          .refundAuthorBond(1, ethers.parseEther("1"), protocol.author.address)
+          .refundAuthorBond(1, ethers.parseEther("1"))
       ).wait();
     } catch {
       overRefund = true;
@@ -2445,7 +2534,77 @@ describe("ScientificProtocol", () => {
     );
   });
 
-  it("rejects zero-address escrow and agent budget recipients", async () => {
+  it("separates operational bounty settlement from timelocked bond custody", async () => {
+    const protocol = await deployProtocol();
+    const bondAmount = ethers.parseEther("1");
+    await (
+      await protocol.claimRegistry
+        .connect(protocol.author)
+        .createClaim(makeClaimSummary(protocol.author.address, 1n), bondAmount, ethers.ZeroAddress)
+    ).wait();
+    await (
+      await protocol.bondEscrow.connect(protocol.author).depositAuthorBond(1, { value: bondAmount })
+    ).wait();
+    await (
+      await protocol.bondEscrow
+        .connect(protocol.admin)
+        .fundReplicationBounty(1, { value: ethers.parseEther("0.5") })
+    ).wait();
+    await (
+      await protocol.replicationRegistry
+        .connect(protocol.replicator)
+        .submitReplication(
+          1,
+          ethers.keccak256(ethers.toUtf8Bytes("role-env")),
+          ethers.keccak256(ethers.toUtf8Bytes("role-result")),
+          ethers.keccak256(ethers.toUtf8Bytes("role-evidence")),
+          0,
+        )
+    ).wait();
+
+    await (
+      await protocol.accessController
+        .connect(protocol.admin)
+        .grantRole(ROLE("BOUNTY_SETTLER_ROLE"), protocol.other.address)
+    ).wait();
+    await (
+      await protocol.bondEscrow
+        .connect(protocol.other)
+        .reserveBountyPayout(1, 1, ethers.parseEther("0.25"))
+    ).wait();
+    await assert.rejects(
+      protocol.bondEscrow.connect(protocol.other).cancelReservedPayout(1, 1),
+      /AccessManagedMissingRole/,
+    );
+    await assert.rejects(
+      protocol.bondEscrow.connect(protocol.other).slashAuthorBond(1, ethers.parseEther("0.1")),
+      /AccessManagedMissingRole/,
+    );
+    await (await protocol.bondEscrow.connect(protocol.admin).cancelReservedPayout(1, 1)).wait();
+
+    const treasuryAddress = await protocol.protocolTreasury.getAddress();
+    const treasuryBefore = await ethers.provider.getBalance(treasuryAddress);
+    await (
+      await protocol.bondEscrow.connect(protocol.admin).slashAuthorBond(1, ethers.parseEther("0.1"))
+    ).wait();
+    assert.equal(
+      await ethers.provider.getBalance(treasuryAddress),
+      treasuryBefore + ethers.parseEther("0.1"),
+    );
+
+    const authorBefore = await ethers.provider.getBalance(protocol.author.address);
+    await (
+      await protocol.bondEscrow
+        .connect(protocol.admin)
+        .refundAuthorBond(1, ethers.parseEther("0.1"))
+    ).wait();
+    assert.equal(
+      await ethers.provider.getBalance(protocol.author.address),
+      authorBefore + ethers.parseEther("0.1"),
+    );
+  });
+
+  it("rejects unknown escrow records and zero-address agent budget recipients", async () => {
     const protocol = await deployProtocol();
     const bondAmount = ethers.parseEther("1");
     const bountyAmount = ethers.parseEther("2");
@@ -2469,17 +2628,6 @@ describe("ScientificProtocol", () => {
         .connect(protocol.admin)
         .reserveBountyPayout(1, 99, ethers.parseEther("0.5")),
     );
-    await assert.rejects(
-      protocol.bondEscrow
-        .connect(protocol.admin)
-        .slashAuthorBond(1, ethers.parseEther("0.1"), ethers.ZeroAddress),
-    );
-    await assert.rejects(
-      protocol.bondEscrow
-        .connect(protocol.admin)
-        .refundAuthorBond(1, ethers.parseEther("0.1"), ethers.ZeroAddress),
-    );
-
     await (
       await protocol.agentRegistry
         .connect(protocol.agentOperator)

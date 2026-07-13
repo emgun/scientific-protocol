@@ -32,6 +32,12 @@ contract EpistemicMarket is DepositPausable, ReentrancyGuard, IEpistemicMarket {
     error EpistemicMarketTransferFailed(address recipient, uint256 amount);
     error EpistemicMarketInvalidConfidence(uint16 confidenceBps);
     error EpistemicMarketUnknownResolutionDecision(uint256 decisionId);
+    error EpistemicMarketClaimNotForecastable(uint256 claimId, ProtocolTypes.ClaimStatus status);
+    error EpistemicMarketDecisionNotNewer(
+        uint256 forecastId,
+        uint256 committedDecisionId,
+        uint256 settlementDecisionId
+    );
     error EpistemicMarketResolutionDecisionClaimMismatch(
         uint256 decisionId,
         uint256 expectedClaimId,
@@ -56,6 +62,7 @@ contract EpistemicMarket is DepositPausable, ReentrancyGuard, IEpistemicMarket {
         bool settled;
         ProtocolTypes.ForecastDirection direction;
         uint16 confidenceBps;
+        uint256 effectiveDecisionIdAtCommit;
         uint256 resolutionDecisionId;
     }
 
@@ -82,7 +89,8 @@ contract EpistemicMarket is DepositPausable, ReentrancyGuard, IEpistemicMarket {
         uint256 agentId,
         bytes32 commitmentHash,
         uint256 stakeAmount,
-        uint64 revealDeadline
+        uint64 revealDeadline,
+        uint256 effectiveDecisionIdAtCommit
     );
     event ForecastRevealed(
         uint256 indexed forecastId,
@@ -172,6 +180,17 @@ contract EpistemicMarket is DepositPausable, ReentrancyGuard, IEpistemicMarket {
         if (!claimRegistry.claimExists(claimId)) {
             revert EpistemicMarketUnknownClaim(claimId);
         }
+        ProtocolTypes.ClaimStatus claimStatus = claimRegistry.getClaim(claimId).status;
+        if (
+            claimStatus == ProtocolTypes.ClaimStatus.Refuted ||
+            claimStatus == ProtocolTypes.ClaimStatus.Fraudulent ||
+            claimStatus == ProtocolTypes.ClaimStatus.Deprecated
+        ) {
+            revert EpistemicMarketClaimNotForecastable(claimId, claimStatus);
+        }
+        uint256 effectiveDecisionIdAtCommit = claimRegistry.getEffectiveResolutionDecisionId(
+            claimId
+        );
         if (msg.value == 0) {
             revert EpistemicMarketInvalidAmount(msg.value);
         }
@@ -196,6 +215,7 @@ contract EpistemicMarket is DepositPausable, ReentrancyGuard, IEpistemicMarket {
             settled: false,
             direction: ProtocolTypes.ForecastDirection.Questions,
             confidenceBps: 0,
+            effectiveDecisionIdAtCommit: effectiveDecisionIdAtCommit,
             resolutionDecisionId: 0
         });
 
@@ -206,7 +226,8 @@ contract EpistemicMarket is DepositPausable, ReentrancyGuard, IEpistemicMarket {
             agentId,
             commitmentHash,
             msg.value,
-            revealDeadline
+            revealDeadline,
+            effectiveDecisionIdAtCommit
         );
     }
 
@@ -278,6 +299,13 @@ contract EpistemicMarket is DepositPausable, ReentrancyGuard, IEpistemicMarket {
                 forecast.claimId,
                 resolutionDecisionId,
                 effectiveDecisionId
+            );
+        }
+        if (resolutionDecisionId <= forecast.effectiveDecisionIdAtCommit) {
+            revert EpistemicMarketDecisionNotNewer(
+                forecastId,
+                forecast.effectiveDecisionIdAtCommit,
+                resolutionDecisionId
             );
         }
         ProtocolTypes.ResolutionDecision memory decision = claimRegistry.getResolutionDecision(
