@@ -19,6 +19,7 @@ import { getProvider, getRpcUrl } from "../src/shared/contracts.js";
 import { getDeploymentPath, saveDeploymentFile } from "../src/shared/deployment.js";
 import { isGcsUrl } from "../src/shared/gcs.js";
 import { createManagedOperatorSigner } from "../src/shared/operator.js";
+import { readEnvValue } from "../src/shared/secrets.js";
 
 const ROLE = (name: string) => keccak256(toUtf8Bytes(name));
 
@@ -83,6 +84,56 @@ export const TIMELOCK_MANAGED_ROLES = [
   "MODULE_ADMIN_ROLE",
   "ESCROW_ADMIN_ROLE",
 ] as const;
+
+export const PRODUCTION_DEPLOYMENT_KEY_ENV_KEYS = [
+  "SP_PROTOCOL_ADMIN_PRIVATE_KEY",
+  "SP_CLAIM_SUBMITTER_PRIVATE_KEY",
+  "SP_REPLICATION_SUBMITTER_PRIVATE_KEY",
+  "SP_RESOLVER_PRIVATE_KEY",
+  "SP_CHECKPOINT_PUBLISHER_PRIVATE_KEY",
+] as const;
+
+export type DeploymentSignerAddresses = {
+  admin: string;
+  claimSubmitter: string;
+  checkpointPublisher: string;
+  replicationSubmitter: string;
+  resolver: string;
+};
+
+export function validateDeploymentSignerTopology(
+  chainId: bigint,
+  env: NodeJS.ProcessEnv,
+  addresses?: DeploymentSignerAddresses,
+): void {
+  if (chainId === 31337n) {
+    return;
+  }
+
+  const missingKeys = PRODUCTION_DEPLOYMENT_KEY_ENV_KEYS.filter((key) => !readEnvValue(env, key));
+  if (missingKeys.length > 0) {
+    throw new Error(
+      `remote deployments require dedicated signer keys; missing ${missingKeys.join(", ")}`,
+    );
+  }
+  if (!addresses) {
+    return;
+  }
+
+  const labelsByAddress = new Map<string, string[]>();
+  for (const [label, address] of Object.entries(addresses)) {
+    const normalized = address.toLowerCase();
+    labelsByAddress.set(normalized, [...(labelsByAddress.get(normalized) ?? []), label]);
+  }
+  const collisions = [...labelsByAddress.values()].filter((labels) => labels.length > 1);
+  if (collisions.length > 0) {
+    throw new Error(
+      `remote deployment signer addresses must be distinct; collisions: ${collisions
+        .map((labels) => labels.join("/"))
+        .join(", ")}`,
+    );
+  }
+}
 
 function getContractFactory(name: ArtifactName, signer: ContractRunner): ContractFactory {
   const artifact = DEPLOYMENT_ARTIFACTS[name];
@@ -199,24 +250,29 @@ export function isDeployLocalEntrypoint(moduleUrl: string, argv: string[] = proc
 }
 
 export async function deployLocalFromEnv(env: NodeJS.ProcessEnv = process.env): Promise<void> {
-  const deployer = createManagedOperatorSigner(
-    ["SP_PROTOCOL_ADMIN_PRIVATE_KEY", "SP_OPERATOR_PRIVATE_KEY"],
-    { env, localAccountIndex: 0 },
-  );
+  const provider = getProvider(getRpcUrl(env));
+  const networkInfo = await provider.getNetwork();
+  validateDeploymentSignerTopology(networkInfo.chainId, env);
+  const signerKeys = (dedicatedKey: string): string[] =>
+    networkInfo.chainId === 31337n ? [dedicatedKey, "SP_OPERATOR_PRIVATE_KEY"] : [dedicatedKey];
+  const deployer = createManagedOperatorSigner(signerKeys("SP_PROTOCOL_ADMIN_PRIVATE_KEY"), {
+    env,
+    localAccountIndex: 0,
+  });
   const replicationSubmitter = createManagedOperatorSigner(
-    ["SP_REPLICATION_SUBMITTER_PRIVATE_KEY", "SP_OPERATOR_PRIVATE_KEY"],
+    signerKeys("SP_REPLICATION_SUBMITTER_PRIVATE_KEY"),
     { env, localAccountIndex: 3 },
   );
-  const claimSubmitter = createManagedOperatorSigner(
-    ["SP_CLAIM_SUBMITTER_PRIVATE_KEY", "SP_OPERATOR_PRIVATE_KEY"],
-    { env, localAccountIndex: 2 },
-  );
-  const resolverOperator = createManagedOperatorSigner(
-    ["SP_RESOLVER_PRIVATE_KEY", "SP_OPERATOR_PRIVATE_KEY"],
-    { env, localAccountIndex: 4 },
-  );
+  const claimSubmitter = createManagedOperatorSigner(signerKeys("SP_CLAIM_SUBMITTER_PRIVATE_KEY"), {
+    env,
+    localAccountIndex: 2,
+  });
+  const resolverOperator = createManagedOperatorSigner(signerKeys("SP_RESOLVER_PRIVATE_KEY"), {
+    env,
+    localAccountIndex: 4,
+  });
   const checkpointPublisher = createManagedOperatorSigner(
-    ["SP_CHECKPOINT_PUBLISHER_PRIVATE_KEY", "SP_OPERATOR_PRIVATE_KEY"],
+    signerKeys("SP_CHECKPOINT_PUBLISHER_PRIVATE_KEY"),
     { env, localAccountIndex: 5 },
   );
   const deployerAddress = await deployer.getAddress();
@@ -224,6 +280,13 @@ export async function deployLocalFromEnv(env: NodeJS.ProcessEnv = process.env): 
   const claimSubmitterAddress = await claimSubmitter.getAddress();
   const resolverOperatorAddress = await resolverOperator.getAddress();
   const checkpointPublisherAddress = await checkpointPublisher.getAddress();
+  validateDeploymentSignerTopology(networkInfo.chainId, env, {
+    admin: deployerAddress,
+    claimSubmitter: claimSubmitterAddress,
+    checkpointPublisher: checkpointPublisherAddress,
+    replicationSubmitter: replicationSubmitterAddress,
+    resolver: resolverOperatorAddress,
+  });
   const DEFAULT_ADMIN_ROLE = "0x0000000000000000000000000000000000000000000000000000000000000000";
   const governanceConfig = resolveLocalGovernanceDeploymentConfig(env);
   const bootstrapVoteRecipients = sumBootstrapAllocations([
@@ -234,8 +297,6 @@ export async function deployLocalFromEnv(env: NodeJS.ProcessEnv = process.env): 
     { account: checkpointPublisherAddress, amount: governanceConfig.bootstrapVoteAmount },
   ]);
 
-  const provider = getProvider(getRpcUrl(env));
-  const networkInfo = await provider.getNetwork();
   const minimumAuthorBondWei = resolveMinimumAuthorBondWei(env, {
     localDevelopment: networkInfo.chainId === 31337n,
   });

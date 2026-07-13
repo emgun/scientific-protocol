@@ -56,6 +56,12 @@ Local and staging deployment now perform this handoff:
 8. retain operational roles such as resolver, bounty settler, and checkpoint publisher on the
    existing operator accounts; no operator EOA retains `ESCROW_ADMIN_ROLE`
 
+Remote deployments require separate admin, claim-submitter, replication-submitter, resolver, and
+checkpoint-publisher keys. The deploy script verifies both explicit key configuration and distinct
+derived addresses before sending its first transaction. The shared `SP_OPERATOR_PRIVATE_KEY`
+fallback remains available only for local chain `31337`, where deterministic Hardhat signer indexes
+keep the roles separate by default.
+
 That leaves governance in control of sensitive administration without breaking the existing resolver and demo flows.
 
 ## Deployment Knobs

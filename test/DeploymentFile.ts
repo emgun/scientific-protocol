@@ -8,9 +8,11 @@ import {
   CHECKPOINT_OPERATOR_ROLES,
   CLAIM_SUBMITTER_OPERATOR_ROLES,
   LOCAL_DEPLOYMENT_BOOTSTRAP_ROLES,
+  PRODUCTION_DEPLOYMENT_KEY_ENV_KEYS,
   RESOLVER_OPERATOR_ROLES,
   resolveMinimumAuthorBondWei,
   TIMELOCK_MANAGED_ROLES,
+  validateDeploymentSignerTopology,
 } from "../script/deploy-protocol.js";
 import {
   type DeploymentFile,
@@ -63,6 +65,31 @@ describe("DeploymentFile", () => {
     expect(new Set(LOCAL_DEPLOYMENT_BOOTSTRAP_ROLES).size).to.equal(
       LOCAL_DEPLOYMENT_BOOTSTRAP_ROLES.length,
     );
+  });
+
+  it("requires explicit distinct deployment signers on remote chains", () => {
+    const addresses = {
+      admin: "0x0000000000000000000000000000000000000001",
+      claimSubmitter: "0x0000000000000000000000000000000000000002",
+      checkpointPublisher: "0x0000000000000000000000000000000000000003",
+      replicationSubmitter: "0x0000000000000000000000000000000000000004",
+      resolver: "0x0000000000000000000000000000000000000005",
+    };
+    const remoteEnv = Object.fromEntries(
+      PRODUCTION_DEPLOYMENT_KEY_ENV_KEYS.map((key, index) => [key, `key-${index}`]),
+    );
+
+    expect(() => validateDeploymentSignerTopology(31337n, {}, addresses)).not.to.throw();
+    expect(() => validateDeploymentSignerTopology(84532n, {}, addresses)).to.throw(
+      /remote deployments require dedicated signer keys/,
+    );
+    expect(() => validateDeploymentSignerTopology(84532n, remoteEnv, addresses)).not.to.throw();
+    expect(() =>
+      validateDeploymentSignerTopology(84532n, remoteEnv, {
+        ...addresses,
+        resolver: addresses.admin.toUpperCase(),
+      }),
+    ).to.throw(/admin\/resolver/);
   });
 
   it("uses one explicit nonzero author-bond floor for remote deployments", () => {
