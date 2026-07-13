@@ -223,7 +223,15 @@ paths:
       tags: [participation]
       summary: List epistemic-market forecasts
       responses:
-        "200": { $ref: "#/components/responses/JsonObject" }
+        "200":
+          description: Forecast rows, optionally wrapped in a page when filters are supplied.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: array
+                    items: { $ref: "#/components/schemas/ForecastView" }
+                  - $ref: "#/components/schemas/ForecastPage"
   /challenges:
     get:
       tags: [participation]
@@ -290,6 +298,56 @@ components:
             properties:
               error: { type: string }
   schemas:
+    ForecastView:
+      type: object
+      additionalProperties: false
+      required:
+        - forecastId
+        - claimId
+        - forecaster
+        - agentId
+        - commitmentHash
+        - stakeAmount
+        - committedAt
+        - revealDeadline
+        - revealed
+        - settled
+        - direction
+        - confidenceBps
+        - effectiveDecisionIdAtCommit
+        - resolutionDecisionId
+        - finalStatus
+        - matched
+        - payoutAmount
+      properties:
+        forecastId: { type: string, pattern: "^[0-9]+$" }
+        claimId: { type: string, pattern: "^[0-9]+$" }
+        forecaster: { type: string, pattern: "^0x[a-fA-F0-9]{40}$" }
+        agentId: { type: string, pattern: "^[0-9]+$" }
+        commitmentHash: { type: string, pattern: "^0x[a-fA-F0-9]{64}$" }
+        stakeAmount: { type: string, pattern: "^[0-9]+$" }
+        committedAt: { type: integer, minimum: 0 }
+        revealDeadline: { type: integer, minimum: 0 }
+        revealed: { type: boolean }
+        settled: { type: boolean }
+        direction: { type: integer, minimum: 0 }
+        confidenceBps: { type: integer, minimum: 0, maximum: 10000 }
+        effectiveDecisionIdAtCommit: { type: [string, "null"], pattern: "^[0-9]+$" }
+        resolutionDecisionId: { type: [string, "null"], pattern: "^[0-9]+$" }
+        finalStatus: { type: [integer, "null"], minimum: 0 }
+        matched: { type: [boolean, "null"] }
+        payoutAmount: { type: [string, "null"], pattern: "^[0-9]+$" }
+    ForecastPage:
+      type: object
+      additionalProperties: false
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ForecastView" }
+        total: { type: integer, minimum: 0 }
+        limit: { type: integer, minimum: 1 }
+        offset: { type: integer, minimum: 0 }
     ClaimCreatePayload:
       type: object
       required: [statement, artifactUri, artifactSha256]

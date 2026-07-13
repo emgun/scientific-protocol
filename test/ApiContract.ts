@@ -36,6 +36,7 @@ describe("published API contracts", () => {
     const schemaFiles = [
       "schemas/claim.schema.json",
       "schemas/replication.schema.json",
+      "schemas/forecast.schema.json",
       "schemas/evaluation.schema.json",
       "schemas/artifact-storage-attestation.schema.json",
       "schemas/artifact-storage-bundle.schema.json",

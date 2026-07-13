@@ -1,8 +1,15 @@
 # Decentralized query subgraph
 
-`subgraph/` is a Graph-compatible, independently deployable index of the v0.3 event surface. It
-tracks claims, artifacts, replications, canonical resolution decisions, reputation checkpoints,
-agents, and governance proposals. It is a query convenience, not protocol authority.
+`subgraph/` is a Graph-compatible, independently deployable index of the v0.3 core
+claim/evidence/governance event surface. It tracks claims, artifacts, replications, canonical
+resolution decisions, reputation checkpoints, agents, and governance proposals. It is a query
+convenience, not protocol authority.
+
+The v0.3 subgraph intentionally does not index the derivative `EpistemicMarket` forecast lifecycle.
+Forecast commitments, reveals, and settlements remain available through contract events and the
+reference Postgres read model/API. This keeps the independently operated subgraph focused on the
+claim-centric evidence and governance history; adding market entities later requires an explicit
+schema and compatibility decision rather than silently broadening this package's query contract.
 
 ## Deterministic generation and build
 

@@ -39,6 +39,7 @@
     },
     "./schemas/claim": "./schemas/claim.schema.json",
     "./schemas/replication": "./schemas/replication.schema.json",
+    "./schemas/forecast": "./schemas/forecast.schema.json",
     "./schemas/evaluation": "./schemas/evaluation.schema.json",
     "./schemas/artifact-storage-attestation": "./schemas/artifact-storage-attestation.schema.json",
     "./schemas/artifact-storage-bundle": "./schemas/artifact-storage-bundle.schema.json"

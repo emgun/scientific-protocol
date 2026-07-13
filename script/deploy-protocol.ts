@@ -280,6 +280,13 @@ export async function deployLocalFromEnv(env: NodeJS.ProcessEnv = process.env): 
   const claimSubmitterAddress = await claimSubmitter.getAddress();
   const resolverOperatorAddress = await resolverOperator.getAddress();
   const checkpointPublisherAddress = await checkpointPublisher.getAddress();
+  const deploymentOperators = {
+    deployer: deployerAddress,
+    claimSubmitter: claimSubmitterAddress,
+    replicationSubmitter: replicationSubmitterAddress,
+    resolverOperator: resolverOperatorAddress,
+    checkpointPublisher: checkpointPublisherAddress,
+  };
   validateDeploymentSignerTopology(networkInfo.chainId, env, {
     admin: deployerAddress,
     claimSubmitter: claimSubmitterAddress,
@@ -649,6 +656,7 @@ export async function deployLocalFromEnv(env: NodeJS.ProcessEnv = process.env): 
           benchmarkModule: await benchmarkModule.getAddress(),
           wetLabModule: await wetLabModule.getAddress(),
         },
+        operators: deploymentOperators,
         parameters: {
           minimumAuthorBondWei: minimumAuthorBondWei.toString(),
         },
@@ -659,10 +667,7 @@ export async function deployLocalFromEnv(env: NodeJS.ProcessEnv = process.env): 
     console.log(
       JSON.stringify(
         {
-          deployer: deployerAddress,
-          replicationSubmitter: replicationSubmitterAddress,
-          resolverOperator: resolverOperatorAddress,
-          checkpointPublisher: checkpointPublisherAddress,
+          ...deploymentOperators,
           bootstrapVoters: bootstrapVoteRecipients.map((allocation) => ({
             account: allocation.account,
             amount: allocation.amount.toString(),

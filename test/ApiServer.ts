@@ -1026,6 +1026,8 @@ function createDependencyOverrides(
         settled: true,
         direction: 1,
         confidenceBps: 8000,
+        effectiveDecisionIdAtCommit: "6",
+        resolutionDecisionId: "7",
         finalStatus: 1,
         matched: true,
         payoutAmount: "12",
@@ -8952,6 +8954,8 @@ describe("ApiServer", () => {
             settled: options.settled ?? true,
             direction: 1,
             confidenceBps: 7500,
+            effectiveDecisionIdAtCommit: "8",
+            resolutionDecisionId: "9",
             finalStatus: options.finalStatus ?? 2,
             matched: false,
             payoutAmount: "0",
@@ -8977,6 +8981,8 @@ describe("ApiServer", () => {
       expect(payload.items[0].claimId).to.equal("2");
       expect(payload.items[0].settled).to.equal(true);
       expect(payload.items[0].finalStatus).to.equal(2);
+      expect(payload.items[0].effectiveDecisionIdAtCommit).to.equal("8");
+      expect(payload.items[0].resolutionDecisionId).to.equal("9");
     } finally {
       await close();
     }

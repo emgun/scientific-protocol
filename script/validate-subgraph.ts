@@ -22,7 +22,15 @@ export async function validateSubgraph(env: NodeJS.ProcessEnv = process.env): Pr
     ["AgentRegistry", deployment.addresses.agentRegistry],
     ["ProtocolGovernor", deployment.addresses.protocolGovernor],
   ]);
+  const excludedDataSources = ["EpistemicMarket"];
   assert.equal(manifest.dataSources.length, expected.size);
+  for (const excluded of excludedDataSources) {
+    assert.equal(
+      manifest.dataSources.some((source) => source.name === excluded),
+      false,
+      `${excluded} is outside the v0.3 core claim/evidence/governance subgraph scope`,
+    );
+  }
   for (const source of manifest.dataSources) {
     assert.equal(source.source.address.toLowerCase(), expected.get(source.name)?.toLowerCase());
     assert.equal(source.source.startBlock, deployment.deploymentBlock);

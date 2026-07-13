@@ -48,6 +48,13 @@ const sampleDeployment: DeploymentFile = {
   deployedAt: "2026-03-17T00:00:00.000Z",
   deploymentBlock: 123,
   network: "base-sepolia",
+  operators: {
+    deployer: "0x0000000000000000000000000000000000000020",
+    claimSubmitter: "0x0000000000000000000000000000000000000021",
+    replicationSubmitter: "0x0000000000000000000000000000000000000022",
+    resolverOperator: "0x0000000000000000000000000000000000000023",
+    checkpointPublisher: "0x0000000000000000000000000000000000000024",
+  },
   parameters: { minimumAuthorBondWei: "5000000000000000" },
 };
 
@@ -221,13 +228,42 @@ describe("DeploymentFile", () => {
       }),
       /missing parameters/,
     );
+
+    const { operators: _operators, ...withoutOperators } = sampleDeployment;
+    await assert.rejects(
+      loadDeploymentFile(undefined, {
+        env: { SP_DEPLOYMENT_JSON: JSON.stringify(withoutOperators) },
+      }),
+      /missing operators/,
+    );
+    await assert.rejects(
+      loadDeploymentFile(undefined, {
+        env: {
+          SP_DEPLOYMENT_JSON: JSON.stringify({
+            ...sampleDeployment,
+            operators: {
+              ...sampleDeployment.operators,
+              claimSubmitter: sampleDeployment.operators.deployer,
+            },
+          }),
+        },
+      }),
+      /duplicate operator addresses/,
+    );
   });
 
   it("saves and loads deployment metadata through gcs paths", async () => {
     const objects = new Map<string, string>();
+    let savedMetadata: Record<string, string> | undefined;
     const fakeClient = {
-      async saveObject(input: { bucket: string; key: string; body: string }): Promise<void> {
+      async saveObject(input: {
+        bucket: string;
+        key: string;
+        body: string;
+        metadata?: Record<string, string>;
+      }): Promise<void> {
         objects.set(`${input.bucket}/${input.key}`, input.body);
+        savedMetadata = input.metadata;
       },
       async readObject(input: { bucket: string; key: string }): Promise<string> {
         return objects.get(`${input.bucket}/${input.key}`) ?? "";
@@ -239,6 +275,13 @@ describe("DeploymentFile", () => {
 
     const deploymentPath = "gs://sp-demo/runtime/staging.addresses.json";
     await saveDeploymentFile(sampleDeployment, deploymentPath, { gcsClient: fakeClient });
+    expect(savedMetadata).to.include({
+      deployer: sampleDeployment.operators.deployer,
+      claimSubmitter: sampleDeployment.operators.claimSubmitter,
+      replicationSubmitter: sampleDeployment.operators.replicationSubmitter,
+      resolverOperator: sampleDeployment.operators.resolverOperator,
+      checkpointPublisher: sampleDeployment.operators.checkpointPublisher,
+    });
     expect(await deploymentFileExists(deploymentPath, { gcsClient: fakeClient })).to.equal(true);
     expect(await loadDeploymentFile(deploymentPath, { gcsClient: fakeClient })).to.deep.equal(
       sampleDeployment,

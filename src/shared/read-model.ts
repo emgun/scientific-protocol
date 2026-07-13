@@ -76,6 +76,7 @@ export type ForecastView = {
   settled: boolean;
   direction: number;
   confidenceBps: number;
+  effectiveDecisionIdAtCommit: string | null;
   resolutionDecisionId: string | null;
   finalStatus: number | null;
   matched: boolean | null;

@@ -833,11 +833,12 @@ export async function upsertForecast(client: PoolClient, forecast: ForecastView)
         settled,
         direction,
         confidence_bps,
+        effective_decision_id_at_commit,
         resolution_decision_id,
         final_status,
         matched,
         payout_amount
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
       ON CONFLICT (forecast_id)
       DO UPDATE SET
         claim_id = EXCLUDED.claim_id,
@@ -851,6 +852,10 @@ export async function upsertForecast(client: PoolClient, forecast: ForecastView)
         settled = EXCLUDED.settled,
         direction = EXCLUDED.direction,
         confidence_bps = EXCLUDED.confidence_bps,
+        effective_decision_id_at_commit = COALESCE(
+          forecasts.effective_decision_id_at_commit,
+          EXCLUDED.effective_decision_id_at_commit
+        ),
         resolution_decision_id = COALESCE(
           forecasts.resolution_decision_id,
           EXCLUDED.resolution_decision_id
@@ -872,6 +877,7 @@ export async function upsertForecast(client: PoolClient, forecast: ForecastView)
       forecast.settled,
       forecast.direction,
       forecast.confidenceBps,
+      forecast.effectiveDecisionIdAtCommit,
       forecast.resolutionDecisionId,
       forecast.finalStatus,
       forecast.matched,
@@ -1986,6 +1992,8 @@ async function queryForecasts(
         settled,
         direction,
         confidence_bps AS "confidenceBps",
+        effective_decision_id_at_commit AS "effectiveDecisionIdAtCommit",
+        resolution_decision_id AS "resolutionDecisionId",
         final_status AS "finalStatus",
         matched,
         payout_amount AS "payoutAmount"

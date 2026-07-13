@@ -747,6 +747,10 @@ async function applyChunk(
         settled: record.settled,
         direction: Number(record.direction),
         confidenceBps: Number(record.confidenceBps),
+        effectiveDecisionIdAtCommit:
+          record.effectiveDecisionIdAtCommit === 0n
+            ? null
+            : record.effectiveDecisionIdAtCommit.toString(),
         resolutionDecisionId:
           record.resolutionDecisionId === 0n ? null : record.resolutionDecisionId.toString(),
         finalStatus: null,

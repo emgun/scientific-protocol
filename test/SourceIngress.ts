@@ -8,7 +8,7 @@ import { expect } from "chai";
 import { consumeConfiguredRateLimit } from "../src/api/rate-limit.js";
 import type { ArtifactDraftInput, ArtifactIngestionResult } from "../src/artifacts/ingestion.js";
 import { upsertPersistedArtifact } from "../src/coordinator/store.js";
-import { migrateReadModelDb } from "../src/indexer/store.js";
+import { migrateReadModelDb, readForecast, upsertForecast } from "../src/indexer/store.js";
 import {
   assertPublicWriteRequestExecution,
   insertPublicWriteRequest,
@@ -910,7 +910,7 @@ describe("source ingress", { skip: database.skipReason }, () => {
     }
   });
 
-  it("installs canonical resolution decision and forecast linkage storage", async () => {
+  it("installs and reads both forecast decision linkages", async () => {
     const pool = await prepareSourceStore();
     try {
       const tables = await pool.query<{ tableName: string }>(
@@ -921,9 +921,72 @@ describe("source ingress", { skip: database.skipReason }, () => {
       const columns = await pool.query<{ columnName: string }>(
         `SELECT column_name AS "columnName" FROM information_schema.columns
          WHERE table_schema = 'public' AND table_name = 'forecasts'
-           AND column_name = 'resolution_decision_id'`,
+           AND column_name IN ('effective_decision_id_at_commit', 'resolution_decision_id')
+         ORDER BY column_name`,
       );
-      expect(columns.rows.map((row) => row.columnName)).to.deep.equal(["resolution_decision_id"]);
+      expect(columns.rows.map((row) => row.columnName)).to.deep.equal([
+        "effective_decision_id_at_commit",
+        "resolution_decision_id",
+      ]);
+
+      await pool.query(
+        `INSERT INTO claims (
+           claim_id, author, domain_id, metadata_hash, resolution_module, status, created_at_block
+         ) VALUES ('900', $1, 1, $2, $1, 1, 1)`,
+        [`0x${"11".repeat(20)}`, `0x${"22".repeat(32)}`],
+      );
+      await pool.query(
+        `INSERT INTO replications (
+           replication_id, claim_id, replicator, agent_id, result_hash
+         ) VALUES
+           ('901', '900', $1, '0', $2),
+           ('902', '900', $1, '0', $3)`,
+        [`0x${"33".repeat(20)}`, `0x${"44".repeat(32)}`, `0x${"55".repeat(32)}`],
+      );
+      await pool.query(
+        `INSERT INTO resolution_decisions (
+           decision_id, claim_id, replication_id, resolution_module, status, claim_status,
+           confidence_bps, resolution_hash, evidence_hash, resolver_type, created_at, actor,
+           effective
+         ) VALUES
+           ('903', '900', '901', $1, 1, 1, 8000, $2, $3, 1, 1, $1, TRUE),
+           ('904', '900', '902', $1, 2, 2, 9000, $4, $5, 1, 2, $1, FALSE)`,
+        [
+          `0x${"66".repeat(20)}`,
+          `0x${"77".repeat(32)}`,
+          `0x${"88".repeat(32)}`,
+          `0x${"99".repeat(32)}`,
+          `0x${"aa".repeat(32)}`,
+        ],
+      );
+      const client = await pool.connect();
+      try {
+        await upsertForecast(client, {
+          forecastId: "905",
+          claimId: "900",
+          forecaster: `0x${"bb".repeat(20)}`,
+          agentId: "0",
+          commitmentHash: `0x${"cc".repeat(32)}`,
+          stakeAmount: "100",
+          committedAt: 1,
+          revealDeadline: 2,
+          revealed: true,
+          settled: true,
+          direction: 1,
+          confidenceBps: 7500,
+          effectiveDecisionIdAtCommit: "903",
+          resolutionDecisionId: "904",
+          finalStatus: 2,
+          matched: true,
+          payoutAmount: "125",
+        });
+      } finally {
+        client.release();
+      }
+      expect(await readForecast(pool, "905")).to.include({
+        effectiveDecisionIdAtCommit: "903",
+        resolutionDecisionId: "904",
+      });
     } finally {
       await pool.end();
     }
