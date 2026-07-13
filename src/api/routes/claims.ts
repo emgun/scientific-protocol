@@ -170,15 +170,59 @@ export async function handleClaimWriteRoutes(context: RouteContext): Promise<boo
     const writeConfig = await buildWriteProtocolConfigPayload(deploymentPath, env);
     const authenticated = await authenticateSignedPublicWriteRequest(dependencies, pool, request, {
       actionType: "claim_publish",
+      allowRecordedReplay: true,
       chainId: writeConfig.chainId,
       scopeKey: `claim:${claimId}`,
     });
     let accepted = false;
+    const leaseOwner = randomUUID();
+    const leaseMs = 5 * 60 * 1000;
+    const leaseAcquired = await dependencies.reservePublicWriteRequestExecution(pool, {
+      leaseMs,
+      leaseOwner,
+      requestId: authenticated.acceptedRequestId,
+    });
+    if (!leaseAcquired) throw new Error("public_write_request_in_progress");
+    let heartbeatError: Error | null = null;
+    let heartbeatRunning = false;
+    const renewLease = async () => {
+      if (heartbeatError) throw heartbeatError;
+      const renewed = await dependencies.renewPublicWriteRequestExecution(pool, {
+        leaseMs,
+        leaseOwner,
+        requestId: authenticated.acceptedRequestId,
+      });
+      if (!renewed) {
+        heartbeatError = new Error("public_write_request_execution_lease_lost");
+        throw heartbeatError;
+      }
+    };
+    const heartbeat = setInterval(() => {
+      if (heartbeatRunning || heartbeatError) return;
+      heartbeatRunning = true;
+      renewLease()
+        .catch((error) => {
+          heartbeatError = error instanceof Error ? error : new Error(String(error));
+        })
+        .finally(() => {
+          heartbeatRunning = false;
+        });
+    }, 30_000);
+    heartbeat.unref();
     try {
       const result = await dependencies.publishProductionClaim(
         claimId,
         authenticated.envelope.actorAddress,
         env,
+        {
+          assertExecutionLease: async () => {
+            await renewLease();
+            await dependencies.assertPublicWriteRequestExecution(pool, {
+              leaseOwner,
+              requestId: authenticated.acceptedRequestId,
+            });
+          },
+        },
       );
       await dependencies.markPublicWriteRequestAccepted(
         pool,
@@ -197,13 +241,28 @@ export async function handleClaimWriteRoutes(context: RouteContext): Promise<boo
       });
     } catch (error) {
       if (!accepted) {
-        await dependencies.markPublicWriteRequestRejected(
-          pool,
-          authenticated.acceptedRequestId,
-          error instanceof Error ? error.message : String(error),
-        );
+        const stillOwnsLease = await dependencies
+          .assertPublicWriteRequestExecution(pool, {
+            leaseOwner,
+            requestId: authenticated.acceptedRequestId,
+          })
+          .then(() => true)
+          .catch(() => false);
+        if (stillOwnsLease) {
+          await dependencies.markPublicWriteRequestRejected(
+            pool,
+            authenticated.acceptedRequestId,
+            error instanceof Error ? error.message : String(error),
+          );
+        }
       }
       throw error;
+    } finally {
+      clearInterval(heartbeat);
+      await dependencies.releasePublicWriteRequestExecution(pool, {
+        leaseOwner,
+        requestId: authenticated.acceptedRequestId,
+      });
     }
     return true;
   }

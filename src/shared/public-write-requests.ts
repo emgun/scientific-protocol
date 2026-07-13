@@ -121,7 +121,7 @@ export async function markPublicWriteRequestPending(
 ): Promise<PublicWriteRequestView> {
   await queryable.query(
     `UPDATE public_write_requests SET status = 'pending', outcome_detail = $2, updated_at = NOW()
-     WHERE request_id = $1`,
+     WHERE request_id = $1 AND status <> 'accepted'`,
     [requestId, outcomeDetail.slice(0, 2000)],
   );
   const request = await readPublicWriteRequest(queryable, requestId);
@@ -141,7 +141,7 @@ export async function markPublicWriteRequestRejected(
         status = 'rejected',
         outcome_detail = $2,
         updated_at = NOW()
-      WHERE request_id = $1
+      WHERE request_id = $1 AND status <> 'accepted'
     `,
     [requestId, outcomeDetail.slice(0, 2000)],
   );

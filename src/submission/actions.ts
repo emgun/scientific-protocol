@@ -70,7 +70,21 @@ export type ProductionClaimReadyCheckpoint = Pick<
 export type ProductionArtifactDraftInput = ArtifactDraftInput;
 export type ProductionArtifactDraftResult = SourceIngestionResult;
 
-const DEFAULT_AUTHOR_BOND_ETH = "0.005";
+export function resolveProductionClaimPublicationAction(input: {
+  actualAuthor: string;
+  bondSatisfied?: boolean;
+  requestedAuthor: string;
+  status: number;
+}): "publish" | "reconciled" {
+  if (input.actualAuthor.toLowerCase() !== input.requestedAuthor.toLowerCase()) {
+    throw new Error("claim_author_unauthorized");
+  }
+  if (input.status >= 1 && input.status <= 6) return "reconciled";
+  if (input.status !== 0) throw new Error("claim_not_draft");
+  if (input.bondSatisfied !== true) throw new Error("claim_author_bond_unsatisfied");
+  return "publish";
+}
+
 const DEFAULT_CLAIM_ARTIFACT_MAX_BYTES = 32 * 1024 * 1024;
 
 function normalizeSha256(value: string): string {
@@ -180,9 +194,11 @@ async function createProductionClaimLocked(
   const artifactType = resolveIntegerInput(input.artifactType, 1, "artifactType", {
     min: 1,
   });
-  const authorBond = resolveEtherInput(input.authorBondEth, DEFAULT_AUTHOR_BOND_ETH);
-
   const deployment = await loadDeploymentFile(getDeploymentPath(env), { env });
+  const authorBond =
+    input.authorBondEth === undefined
+      ? BigInt(deployment.parameters.minimumAuthorBondWei)
+      : resolveEtherInput(input.authorBondEth, "0");
   const submitterSigner = createManagedOperatorSigner(
     ["SP_CLAIM_SUBMITTER_PRIVATE_KEY", "SP_PROTOCOL_ADMIN_PRIVATE_KEY", "SP_OPERATOR_PRIVATE_KEY"],
     { env, localAccountIndex: 0 },
@@ -352,7 +368,13 @@ export async function publishProductionClaim(
   claimId: string,
   authorAddress: string,
   env: NodeJS.ProcessEnv = process.env,
-): Promise<{ claimId: string; publicationStatus: "published"; publishClaimTxHash: string }> {
+  options: { assertExecutionLease?: () => Promise<void> } = {},
+): Promise<{
+  claimId: string;
+  publicationStatus: "published";
+  publishClaimTxHash: string | null;
+  reconciled: boolean;
+}> {
   const deployment = await loadDeploymentFile(getDeploymentPath(env), { env });
   const resolverSigner = createManagedOperatorSigner(
     ["SP_RESOLVER_PRIVATE_KEY", "SP_PROTOCOL_ADMIN_PRIVATE_KEY", "SP_OPERATOR_PRIVATE_KEY"],
@@ -363,16 +385,32 @@ export async function publishProductionClaim(
     getContract("BondEscrow", deployment.addresses.bondEscrow, resolverSigner),
   ]);
   const claim = await claimRegistry.getClaim(BigInt(claimId));
-  if (claim.summary.author.toLowerCase() !== authorAddress.toLowerCase()) {
-    throw new Error("claim_author_unauthorized");
+  const status = Number(claim.status);
+  const bondSatisfied =
+    status === 0 ? await bondEscrow.isAuthorBondSatisfied(BigInt(claimId)) : undefined;
+  const action = resolveProductionClaimPublicationAction({
+    actualAuthor: claim.summary.author,
+    bondSatisfied,
+    requestedAuthor: authorAddress,
+    status,
+  });
+  if (action === "reconciled") {
+    return {
+      claimId,
+      publicationStatus: "published",
+      publishClaimTxHash: null,
+      reconciled: true,
+    };
   }
-  if (Number(claim.status) !== 0) throw new Error("claim_not_draft");
-  if (!(await bondEscrow.isAuthorBondSatisfied(BigInt(claimId)))) {
-    throw new Error("claim_author_bond_unsatisfied");
-  }
+  await options.assertExecutionLease?.();
   const tx = await claimRegistry.setClaimStatus(BigInt(claimId), 1);
   const receipt = await tx.wait();
-  return { claimId, publicationStatus: "published", publishClaimTxHash: receipt.hash };
+  return {
+    claimId,
+    publicationStatus: "published",
+    publishClaimTxHash: receipt.hash,
+    reconciled: false,
+  };
 }
 
 export async function createProductionArtifactDraft(

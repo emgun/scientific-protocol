@@ -3385,6 +3385,8 @@ describe("ApiServer", () => {
       expect(payload.artifactRegistryAddress).to.match(/^0x[a-fA-F0-9]{40}$/);
       expect(payload.claimRegistryAddress).to.match(/^0x[a-fA-F0-9]{40}$/);
       expect(payload.bondEscrowAddress).to.match(/^0x[a-fA-F0-9]{40}$/);
+      expect(payload.authorBondWei).to.equal("5000000000000000");
+      expect(payload.minimumAuthorBondWei).to.equal(payload.authorBondWei);
       expect(payload.claimRewardVaultAddress).to.match(/^0x[a-fA-F0-9]{40}$/);
       expect(payload.operatorLifecycleAuth.canonicalMode).to.equal("wallet_signature");
       expect(payload.operatorLifecycleAuth.resolverRole).to.equal("RESOLVER_ROLE");
@@ -3630,7 +3632,12 @@ describe("ApiServer", () => {
     const { baseUrl, close } = await startServer({
       publishProductionClaim: async (claimId, authorAddress) => {
         received = { authorAddress, claimId };
-        return { claimId, publicationStatus: "published", publishClaimTxHash: "0xpublish" };
+        return {
+          claimId,
+          publicationStatus: "published",
+          publishClaimTxHash: "0xpublish",
+          reconciled: false,
+        };
       },
     });
     try {
@@ -3655,6 +3662,156 @@ describe("ApiServer", () => {
       expect(received).to.deep.equal({ authorAddress: wallet.address, claimId: "23" });
       expect((await response.json()).result.publicationStatus).to.equal("published");
     } finally {
+      await close();
+    }
+  });
+
+  it("reconciles an exact publication replay after the chain write outlives request acceptance", async () => {
+    const wallet = Wallet.createRandom();
+    let publishCalls = 0;
+    let acceptanceCalls = 0;
+    const { baseUrl, close } = await startServer({
+      publishProductionClaim: async (claimId) => {
+        publishCalls += 1;
+        return {
+          claimId,
+          publicationStatus: "published",
+          publishClaimTxHash: publishCalls === 1 ? "0xpublish" : null,
+          reconciled: publishCalls > 1,
+        };
+      },
+      markPublicWriteRequestAccepted: async (_pool, requestId, outcomeDetail) => {
+        acceptanceCalls += 1;
+        if (acceptanceCalls === 1) throw new Error("fault_after_chain_publish");
+        return {
+          requestId,
+          actionType: "claim_publish",
+          actorAddress: wallet.address.toLowerCase(),
+          chainId: 31337,
+          requestNonce: "claim-publish-replay",
+          scopeKey: "claim:23",
+          requestHash: "0xrequest",
+          signature: "0xsigned",
+          payload: {},
+          status: "accepted",
+          outcomeDetail: outcomeDetail ?? null,
+          createdAt: "2026-07-12T00:00:00.000Z",
+          updatedAt: "2026-07-12T00:00:01.000Z",
+        };
+      },
+    });
+    try {
+      const signed = await buildSignedPublicWriteBody(wallet, {
+        actionType: "claim_publish",
+        actorAddress: wallet.address,
+        chainId: 31337,
+        issuedAt: new Date().toISOString(),
+        payload: {},
+        requestNonce: "claim-publish-replay",
+        scopeKey: "claim:23",
+      });
+      const publish = () =>
+        fetch(`${baseUrl}/claims/23/publish`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(signed),
+        });
+      expect((await publish()).status).to.equal(500);
+      const replay = await publish();
+      expect(replay.status).to.equal(200);
+      const payload = await replay.json();
+      expect(payload.result).to.include({ publicationStatus: "published", reconciled: true });
+      expect(payload.result.publishClaimTxHash).to.equal(null);
+      expect(publishCalls).to.equal(2);
+      expect(acceptanceCalls).to.equal(2);
+    } finally {
+      await close();
+    }
+  });
+
+  it("serializes concurrent exact publication replays under one execution lease", async () => {
+    const wallet = Wallet.createRandom();
+    let leaseHeld = false;
+    let publishCalls = 0;
+    let acceptedStatus: string | null = null;
+    let releasePublish: (() => void) | null = null;
+    const publishStarted = new Promise<void>((resolve) => {
+      releasePublish = resolve;
+    });
+    let unblockPublish: (() => void) | null = null;
+    const publishBlocked = new Promise<void>((resolve) => {
+      unblockPublish = resolve;
+    });
+    const { baseUrl, close } = await startServer({
+      reservePublicWriteRequestExecution: async () => {
+        if (leaseHeld) return false;
+        leaseHeld = true;
+        return true;
+      },
+      renewPublicWriteRequestExecution: async () => leaseHeld,
+      assertPublicWriteRequestExecution: async () => {
+        if (!leaseHeld) throw new Error("public_write_request_execution_lease_lost");
+      },
+      releasePublicWriteRequestExecution: async () => {
+        leaseHeld = false;
+      },
+      publishProductionClaim: async (claimId) => {
+        publishCalls += 1;
+        releasePublish?.();
+        await publishBlocked;
+        return {
+          claimId,
+          publicationStatus: "published",
+          publishClaimTxHash: "0xpublish",
+          reconciled: false,
+        };
+      },
+      markPublicWriteRequestAccepted: async (_pool, requestId, outcomeDetail) => {
+        acceptedStatus = "accepted";
+        return {
+          requestId,
+          actionType: "claim_publish",
+          actorAddress: wallet.address.toLowerCase(),
+          chainId: 31337,
+          requestNonce: "claim-publish-concurrent",
+          scopeKey: "claim:23",
+          requestHash: "0xrequest",
+          signature: "0xsigned",
+          payload: {},
+          status: "accepted",
+          outcomeDetail: outcomeDetail ?? null,
+          createdAt: "2026-07-12T00:00:00.000Z",
+          updatedAt: "2026-07-12T00:00:01.000Z",
+        };
+      },
+    });
+    try {
+      const signed = await buildSignedPublicWriteBody(wallet, {
+        actionType: "claim_publish",
+        actorAddress: wallet.address,
+        chainId: 31337,
+        issuedAt: new Date().toISOString(),
+        payload: {},
+        requestNonce: "claim-publish-concurrent",
+        scopeKey: "claim:23",
+      });
+      const publish = () =>
+        fetch(`${baseUrl}/claims/23/publish`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(signed),
+        });
+      const winnerPromise = publish();
+      await publishStarted;
+      const concurrent = await publish();
+      expect(concurrent.status).to.equal(409);
+      expect(await concurrent.json()).to.deep.equal({ error: "public_write_request_in_progress" });
+      unblockPublish?.();
+      expect((await winnerPromise).status).to.equal(200);
+      expect(publishCalls).to.equal(1);
+      expect(acceptedStatus).to.equal("accepted");
+    } finally {
+      unblockPublish?.();
       await close();
     }
   });

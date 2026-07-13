@@ -12,6 +12,10 @@ import { migrateReadModelDb } from "../src/indexer/store.js";
 import {
   assertPublicWriteRequestExecution,
   insertPublicWriteRequest,
+  markPublicWriteRequestAccepted,
+  markPublicWriteRequestPending,
+  markPublicWriteRequestRejected,
+  readPublicWriteRequest,
   releasePublicWriteRequestExecution,
   renewPublicWriteRequestExecution,
   reservePublicWriteRequestExecution,
@@ -965,6 +969,12 @@ describe("source ingress", { skip: database.skipReason }, () => {
           requestId: request.requestId,
         }),
       ).to.equal(false);
+      await markPublicWriteRequestAccepted(pool, request.requestId, "claim:7:published");
+      await markPublicWriteRequestPending(pool, request.requestId, "late_worker_pending");
+      await markPublicWriteRequestRejected(pool, request.requestId, "late_worker_rejected");
+      const accepted = await readPublicWriteRequest(pool, request.requestId);
+      expect(accepted?.status).to.equal("accepted");
+      expect(accepted?.outcomeDetail).to.equal("claim:7:published");
     } finally {
       await pool.end();
     }

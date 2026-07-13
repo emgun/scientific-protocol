@@ -1479,11 +1479,21 @@ describe("ScientificProtocol", () => {
   it("enforces the governance-set minimum author bond on new claims", async () => {
     const protocol = await deployProtocol();
     const minBondKey = await protocol.claimRegistry.MIN_AUTHOR_BOND_PARAMETER_KEY();
-    await (
+    const parameterReceipt = await (
       await protocol.protocolParameters
         .connect(protocol.admin)
         .setUintParameter(minBondKey, ethers.parseEther("0.5"))
     ).wait();
+    assert.ok(
+      parameterReceipt?.logs.some((log) => {
+        try {
+          const parsed = protocol.protocolParameters.interface.parseLog(log);
+          return parsed?.name === "UintParameterSet" && parsed.args.key === minBondKey;
+        } catch {
+          return false;
+        }
+      }),
+    );
 
     await assert.rejects(
       protocol.claimRegistry

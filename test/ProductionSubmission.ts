@@ -4,9 +4,46 @@ import { describe, it } from "node:test";
 import { expect } from "chai";
 import { createDemoClaim } from "../src/demo/actions.js";
 import { resolveIntegerInput } from "../src/shared/numbers.js";
-import { runClaimCreationSaga, verifyProductionClaimArtifact } from "../src/submission/actions.js";
+import {
+  resolveProductionClaimPublicationAction,
+  runClaimCreationSaga,
+  verifyProductionClaimArtifact,
+} from "../src/submission/actions.js";
 
 describe("production submission", () => {
+  it("reconciles canonical published state without weakening author or bond checks", () => {
+    const author = "0x00000000000000000000000000000000000000aa";
+    expect(
+      resolveProductionClaimPublicationAction({
+        actualAuthor: author,
+        requestedAuthor: author.toUpperCase(),
+        status: 1,
+      }),
+    ).to.equal("reconciled");
+    expect(() =>
+      resolveProductionClaimPublicationAction({
+        actualAuthor: author,
+        requestedAuthor: "0x00000000000000000000000000000000000000bb",
+        status: 1,
+      }),
+    ).to.throw("claim_author_unauthorized");
+    expect(() =>
+      resolveProductionClaimPublicationAction({
+        actualAuthor: author,
+        bondSatisfied: false,
+        requestedAuthor: author,
+        status: 0,
+      }),
+    ).to.throw("claim_author_bond_unsatisfied");
+    expect(
+      resolveProductionClaimPublicationAction({
+        actualAuthor: author,
+        bondSatisfied: true,
+        requestedAuthor: author,
+        status: 0,
+      }),
+    ).to.equal("publish");
+  });
   it("validates integer claim fields before chain setup", () => {
     expect(resolveIntegerInput(undefined, 1, "domainId")).to.equal(1);
     expect(resolveIntegerInput(0, 1, "domainId")).to.equal(0);

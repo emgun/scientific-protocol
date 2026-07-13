@@ -22,6 +22,9 @@ All notable changes to the `scientific-protocol` package are documented here. Th
   transport-level DNS pinning, global client/actor source throttles, and resumable `source_submit`.
 - One gated release chain publishes npm, then the immutable service image, then a GitHub Release;
   pull requests build and health-smoke the container without credentials.
+- Remote deployment now requires an explicit nonzero minimum author bond, sets it onchain, and
+  records the identical default in deployment metadata and `/write-config`. Exact signed
+  `claim_publish` replays reconcile already-published chain state under a fenced request lease.
 
 ### ABI changes
 

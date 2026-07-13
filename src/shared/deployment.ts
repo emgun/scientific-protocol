@@ -31,6 +31,9 @@ export type DeploymentFile = {
   deploymentBlock: number;
   deployedAt: string;
   addresses: DeploymentAddresses;
+  parameters: {
+    minimumAuthorBondWei: string;
+  };
 };
 
 export const DEFAULT_DEPLOYMENT_PATH = path.resolve(process.cwd(), "ops", "local.addresses.json");
@@ -145,6 +148,14 @@ function validateDeploymentFile(value: unknown, source: string): DeploymentFile 
   if (!addresses) {
     throw new Error(`deployment file from ${source} is missing addresses`);
   }
+  const parameters = recordLike(record.parameters);
+  if (!parameters) {
+    throw new Error(`deployment file from ${source} is missing parameters`);
+  }
+  const minimumAuthorBondWei = requireString(parameters, "minimumAuthorBondWei", source);
+  if (!/^\d+$/u.test(minimumAuthorBondWei)) {
+    throw new Error(`deployment file from ${source} has invalid minimumAuthorBondWei`);
+  }
   for (const key of DEPLOYMENT_ADDRESS_KEYS) {
     const address = requireString(addresses, key, source);
     if (!isAddress(address)) {
@@ -160,6 +171,7 @@ function validateDeploymentFile(value: unknown, source: string): DeploymentFile 
     deployedAt: requireTimestamp(record, "deployedAt", source),
     deploymentBlock: requireNonNegativeInteger(record, "deploymentBlock", source),
     network: requireString(record, "network", source),
+    parameters: { minimumAuthorBondWei },
   };
 }
 
@@ -230,6 +242,7 @@ export async function saveDeploymentFile(
       metadata: {
         chainId: String(deployment.chainId),
         deploymentBlock: String(deployment.deploymentBlock),
+        minimumAuthorBondWei: deployment.parameters.minimumAuthorBondWei,
         network: deployment.network,
       },
     });

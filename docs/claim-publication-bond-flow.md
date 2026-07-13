@@ -9,6 +9,10 @@ Service-assisted claim creation is deliberately two-step:
 4. the operated resolver verifies `BondEscrow.isAuthorBondSatisfied(id)` onchain and only then moves
    the claim from `Draft` to `Published`.
 
+The minimum/default amount has one deployment source of truth. Deployment records the configured
+onchain `osp.claim.minAuthorBond` value as `parameters.minimumAuthorBondWei`; `/write-config`
+publishes that same value as both `authorBondWei` and `minimumAuthorBondWei`.
+
 The API never sponsors or deposits a bond on behalf of an author. This preserves bond provenance
 and prevents a service key from manufacturing economically backed publication.
 
@@ -25,6 +29,11 @@ request hash is also registered onchain: `createClaimOnBehalfWithRequestHash` id
 original claim id, so a lease race or arbitrarily old replay cannot create a second claim. Artifact
 attachment is reconciled against that claim before writing. A different payload using the same nonce
 remains rejected.
+
+`claim_publish` uses the same renewable request lease and permits only exact recorded replay. If the
+chain write succeeded before request acceptance was persisted, the retry verifies the author and
+canonical claim status, returns `reconciled: true` with a null transaction hash, and marks the
+original request accepted. Pending or rejected late workers cannot downgrade an accepted row.
 
 Source auto-publication follows the same rule. Consensus may prepare a draft, but the source remains
 `ready_for_publication` and its publication attempt remains `claim_ready` until the source author

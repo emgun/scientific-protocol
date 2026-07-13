@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { expect } from "chai";
+import { resolveMinimumAuthorBondWei } from "../script/deploy-protocol.js";
 import {
   type DeploymentFile,
   deploymentFileExists,
@@ -38,9 +39,35 @@ const sampleDeployment: DeploymentFile = {
   deployedAt: "2026-03-17T00:00:00.000Z",
   deploymentBlock: 123,
   network: "base-sepolia",
+  parameters: { minimumAuthorBondWei: "5000000000000000" },
 };
 
 describe("DeploymentFile", () => {
+  it("uses one explicit nonzero author-bond floor for remote deployments", () => {
+    expect(() => resolveMinimumAuthorBondWei({})).to.throw(/require SP_MIN_AUTHOR_BOND/);
+    expect(resolveMinimumAuthorBondWei({}, { localDevelopment: true })).to.equal(
+      5_000_000_000_000_000n,
+    );
+    expect(resolveMinimumAuthorBondWei({ SP_MIN_AUTHOR_BOND_ETH: "0.01" })).to.equal(
+      10_000_000_000_000_000n,
+    );
+    expect(resolveMinimumAuthorBondWei({ SP_MIN_AUTHOR_BOND_WEI: "7" })).to.equal(7n);
+    expect(() => resolveMinimumAuthorBondWei({ SP_MIN_AUTHOR_BOND_WEI: "0" })).to.throw(
+      /nonzero minimum author bond/,
+    );
+    expect(() => resolveMinimumAuthorBondWei({ SP_MIN_AUTHOR_BOND_ETH: "-0.001" })).to.throw(
+      /cannot be negative/,
+    );
+    expect(
+      resolveMinimumAuthorBondWei({ SP_MIN_AUTHOR_BOND_WEI: "0" }, { localDevelopment: true }),
+    ).to.equal(0n);
+    expect(() =>
+      resolveMinimumAuthorBondWei({
+        SP_MIN_AUTHOR_BOND_ETH: "0.01",
+        SP_MIN_AUTHOR_BOND_WEI: "1",
+      }),
+    ).to.throw(/only one/);
+  });
   it("resolves deployment paths from explicit env input", () => {
     expect(getDeploymentPath({ SP_DEPLOYMENT_PATH: " ops/staging.addresses.json " })).to.equal(
       "ops/staging.addresses.json",
@@ -137,6 +164,13 @@ describe("DeploymentFile", () => {
         },
       }),
       /failed to parse deployment file from SP_DEPLOYMENT_JSON: deployment file from SP_DEPLOYMENT_JSON has invalid deployedAt/,
+    );
+    const { parameters: _parameters, ...withoutParameters } = sampleDeployment;
+    await assert.rejects(
+      loadDeploymentFile(undefined, {
+        env: { SP_DEPLOYMENT_JSON: JSON.stringify(withoutParameters) },
+      }),
+      /missing parameters/,
     );
   });
 

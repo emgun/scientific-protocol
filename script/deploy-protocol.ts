@@ -93,6 +93,28 @@ export type LocalGovernanceDeploymentConfig = {
   votingPeriodBlocks: bigint;
 };
 
+export function resolveMinimumAuthorBondWei(
+  env: NodeJS.ProcessEnv = process.env,
+  options: { localDevelopment?: boolean } = {},
+): bigint {
+  const wei = readOptionalTrimmedEnv(env, "SP_MIN_AUTHOR_BOND_WEI");
+  const ether = readOptionalTrimmedEnv(env, "SP_MIN_AUTHOR_BOND_ETH");
+  if (wei && ether) {
+    throw new Error("configure only one of SP_MIN_AUTHOR_BOND_WEI or SP_MIN_AUTHOR_BOND_ETH");
+  }
+  if (!wei && !ether && !options.localDevelopment) {
+    throw new Error("remote deployments require SP_MIN_AUTHOR_BOND_WEI or SP_MIN_AUTHOR_BOND_ETH");
+  }
+  const value = wei ? getEnvUint(env, "SP_MIN_AUTHOR_BOND_WEI", 0n) : parseEther(ether ?? "0.005");
+  if (value < 0n) {
+    throw new Error("minimum author bond cannot be negative");
+  }
+  if (value === 0n && !options.localDevelopment) {
+    throw new Error("remote deployments require a nonzero minimum author bond");
+  }
+  return value;
+}
+
 export function resolveLocalGovernanceDeploymentConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): LocalGovernanceDeploymentConfig {
@@ -184,6 +206,10 @@ export async function deployLocalFromEnv(env: NodeJS.ProcessEnv = process.env): 
   ]);
 
   const provider = getProvider(getRpcUrl(env));
+  const networkInfo = await provider.getNetwork();
+  const minimumAuthorBondWei = resolveMinimumAuthorBondWei(env, {
+    localDevelopment: networkInfo.chainId === 31337n,
+  });
   const deployTxOverrides = { gasLimit: 8_000_000n };
   const setupTxOverrides = { gasLimit: 500_000n };
   try {
@@ -242,6 +268,13 @@ export async function deployLocalFromEnv(env: NodeJS.ProcessEnv = process.env): 
       deployTxOverrides,
     )) as UntypedContract;
     await protocolParameters.waitForDeployment();
+    await (
+      await protocolParameters.setUintParameter(
+        keccak256(toUtf8Bytes("osp.claim.minAuthorBond")),
+        minimumAuthorBondWei,
+        setupTxOverrides,
+      )
+    ).wait();
 
     const ResolutionModuleRegistry = getContractFactory("ResolutionModuleRegistry", deployer);
     const resolutionModuleRegistry = (await ResolutionModuleRegistry.deploy(
@@ -531,7 +564,6 @@ export async function deployLocalFromEnv(env: NodeJS.ProcessEnv = process.env): 
     }
 
     const latestBlock = await provider.getBlockNumber();
-    const networkInfo = await provider.getNetwork();
 
     await saveDeploymentFile(
       {
@@ -560,6 +592,9 @@ export async function deployLocalFromEnv(env: NodeJS.ProcessEnv = process.env): 
           benchmarkModule: await benchmarkModule.getAddress(),
           wetLabModule: await wetLabModule.getAddress(),
         },
+        parameters: {
+          minimumAuthorBondWei: minimumAuthorBondWei.toString(),
+        },
       },
       deploymentPath,
     );
@@ -577,6 +612,7 @@ export async function deployLocalFromEnv(env: NodeJS.ProcessEnv = process.env): 
           })),
           deploymentBlock: latestBlock,
           deploymentFile: deploymentPath,
+          minimumAuthorBondWei: minimumAuthorBondWei.toString(),
         },
         null,
         2,
