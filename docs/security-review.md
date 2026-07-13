@@ -84,12 +84,20 @@ not the authority boundary.
   `ResolutionDecision`; later decisions remain recordable even when they cannot validly rewrite a
   stronger or terminal claim state.
 - The latest recorded decision is only the append-only evidence tail. A separate effective decision
-  pointer advances exclusively when a decision establishes new claim state. Forecast settlement
-  consumes that effective pointer, so later weaker evidence cannot reverse value settlement while
-  leaving claim state unchanged.
+  pointer advances exclusively when a decision establishes new claim state. A forecast snapshots
+  the effective pointer at commitment and can settle only against a strictly newer pointer, so
+  known outcomes cannot extract bonuses and later weaker evidence cannot reverse value settlement.
+- Operational `BOUNTY_SETTLER_ROLE` authority is limited to replication-bound reserve and release.
+  Timelocked `ESCROW_ADMIN_ROLE` controls terminal cancellation and author-bond movement; refunds
+  are fixed to the claim author and slashes are fixed to the immutable protocol treasury.
 - Delegated claim creation binds each signed request hash to one onchain claim id. Renewable service
   leases fence stale workers before chain writes; the onchain mapping is the final duplicate barrier.
 - Outbound HTTP transport pins every redirect hop to the exact DNS addresses that passed validation.
+- Repository ingestion passes the validated address to Git/libcurl and persists that pin in the
+  partial clone, so later promisor-object reads cannot independently re-resolve the hostname.
+- Exact source-submit recovery binds one request hash to one submission row. Accepted replays
+  reconstruct that row without consuming quotas or rewriting acceptance; pending and rejected
+  replays remain fenced and consume the configured client, actor, and canonical-source limits.
 - An agent spend limit is a lifetime ceiling over consumed value plus live reservations. Releasing
   a reservation restores capacity, while consuming it permanently uses capacity. Raising the
   ceiling is an explicit operator action; it cannot be lowered below committed value.

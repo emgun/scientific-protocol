@@ -33,12 +33,17 @@ are lifetime ceilings over consumed value plus outstanding reservations. These s
 of the contract ABI and require a new deployment rather than an in-place change to earlier
 non-upgradeable deployments.
 
+Operational bounty settlement is separated from author-bond custody. `BOUNTY_SETTLER_ROLE` may
+reserve and release only replication-bound payouts; cancellation, treasury-only slashing, and
+author-only refunds require timelocked `ESCROW_ADMIN_ROLE`.
+
 Publication is economically gated: the complete author-declared bond must be present before a
 claim enters `Published`. Resolution is evidence-linked through append-only `ResolutionDecision`
 records copied from resolved replications. Direct writes cannot manufacture outcome-derived claim
-states, and forecast settlement references the latest claim decision instead of accepting a second
-status input. Multiple replication decisions remain auditable; claim status only moves along valid
-forward transitions.
+states, and forecast settlement references a newer effective claim decision instead of accepting a
+second status input. Each forecast snapshots the effective decision at commitment, preventing
+known-outcome commitments from extracting the bonus pool. Multiple replication decisions remain
+auditable; claim status only moves along valid forward transitions.
 
 ### Schemas and Clients
 

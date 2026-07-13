@@ -16,6 +16,7 @@ import {
   readSourceByCanonicalKey,
   readSourceIngestionAttempt,
   readSourceRecord,
+  readSourceSubmissionRecordByRequestHash,
   reserveSourceIngestionAttempt,
   upsertSourceRecord,
 } from "./store.js";
@@ -40,6 +41,7 @@ export type SourceIngestOptions = {
   ingestionWaitPollMs?: number;
   leaseOwner?: string;
   openSourceExtractionTasks?: typeof openSourceExtractionTasks;
+  requestHash?: string | null;
   submittedByActor?: string | null;
   submittedByAgentId?: string | null;
 };
@@ -321,6 +323,7 @@ export async function ingestSource(
         discoveryMode: options.discoveryMode ?? "user_submitted",
         normalizedLocator: canonical.normalizedLocator,
         rawLocator: locator,
+        requestHash: options.requestHash,
         sourceId: source.sourceId,
         submissionOutcome: "created",
         submittedByActor: options.submittedByActor ?? null,
@@ -391,16 +394,29 @@ async function replayDuplicateSourceSubmission(
       if (!preview || !sourceVersion) {
         throw new Error(`source_duplicate_replay_unavailable:${existing.sourceId}`);
       }
-      const submission = await insertSourceSubmissionRecord(queryable, {
-        canonicalSourceKey: canonical.canonicalSourceKey,
-        discoveryMode: options.discoveryMode ?? "user_submitted",
-        normalizedLocator: canonical.normalizedLocator,
-        rawLocator: input.sourceType === "repository" ? input.repositoryUrl : input.sourceUrl,
-        sourceId: existing.sourceId,
-        submissionOutcome: "duplicate",
-        submittedByActor: options.submittedByActor ?? null,
-        submittedByAgentId: options.submittedByAgentId ?? null,
-      });
+      const recordedSubmission = options.requestHash
+        ? await readSourceSubmissionRecordByRequestHash(queryable, options.requestHash)
+        : undefined;
+      if (
+        recordedSubmission &&
+        (recordedSubmission.canonicalSourceKey !== canonical.canonicalSourceKey ||
+          recordedSubmission.sourceId !== existing.sourceId)
+      ) {
+        throw new Error("source_submission_request_hash_mismatch");
+      }
+      const submission =
+        recordedSubmission ??
+        (await insertSourceSubmissionRecord(queryable, {
+          canonicalSourceKey: canonical.canonicalSourceKey,
+          discoveryMode: options.discoveryMode ?? "user_submitted",
+          normalizedLocator: canonical.normalizedLocator,
+          rawLocator: input.sourceType === "repository" ? input.repositoryUrl : input.sourceUrl,
+          requestHash: options.requestHash,
+          sourceId: existing.sourceId,
+          submissionOutcome: "duplicate",
+          submittedByActor: options.submittedByActor ?? null,
+          submittedByAgentId: options.submittedByAgentId ?? null,
+        }));
 
       return {
         artifactType:

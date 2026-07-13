@@ -797,6 +797,38 @@ describe("source ingress", { skip: database.skipReason }, () => {
     }
   });
 
+  it("reconstructs an exact request-hash replay without appending another submission", async () => {
+    const pool = await prepareSourceStore();
+    const sourceUrl = `https://example.com/exact-replay-${randomUUID()}.txt`;
+    const requestHash = `0x${createHash("sha256").update(sourceUrl).digest("hex")}`;
+    let ingestCalls = 0;
+    const options = {
+      artifactIngestor: async () => {
+        ingestCalls += 1;
+        return makeStubIngestionResult(sourceUrl);
+      },
+      discoveryMode: "user_submitted" as const,
+      openSourceExtractionTasks: async () => undefined,
+      requestHash,
+      submittedByActor: "0x0000000000000000000000000000000000000001",
+    };
+    try {
+      const first = await ingestSource(pool, { sourceType: "url", sourceUrl }, options);
+      const replay = await ingestSource(pool, { sourceType: "url", sourceUrl }, options);
+      expect(replay.source.sourceId).to.equal(first.source.sourceId);
+      expect(replay.submission.submissionId).to.equal(first.submission.submissionId);
+      expect(replay.submission.requestHash).to.equal(requestHash);
+      expect(ingestCalls).to.equal(1);
+      const submissions = await readSourceSubmissionRecordsPage(pool, {
+        limit: 10,
+        sourceId: first.source.sourceId,
+      });
+      expect(submissions.items).to.have.length(1);
+    } finally {
+      await pool.end();
+    }
+  });
+
   it("recovers a source ingestion attempt after an abandoned lease expires", async () => {
     const pool = await prepareSourceStore();
     const sourcePath = `https://example.com/abandoned-source-${randomUUID()}.txt`;

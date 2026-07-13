@@ -83,35 +83,88 @@ function parseIpv4(address: string): number[] | null {
     : null;
 }
 
+function parseIpv6(address: string): Uint8Array | null {
+  const normalized = address.toLowerCase().split("%")[0] ?? address.toLowerCase();
+  if (isIP(normalized) !== 6) return null;
+  const halves = normalized.split("::");
+  if (halves.length > 2) return null;
+  const parseGroups = (part: string): number[] | null => {
+    if (!part) return [];
+    const rawGroups = part.split(":");
+    const groups: number[] = [];
+    for (const rawGroup of rawGroups) {
+      const dotted = parseIpv4(rawGroup);
+      if (dotted) {
+        const [a = 0, b = 0, c = 0, d = 0] = dotted;
+        groups.push((a << 8) | b, (c << 8) | d);
+        continue;
+      }
+      if (!/^[0-9a-f]{1,4}$/u.test(rawGroup)) return null;
+      groups.push(Number.parseInt(rawGroup, 16));
+    }
+    return groups;
+  };
+  const left = parseGroups(halves[0] ?? "");
+  const right = parseGroups(halves[1] ?? "");
+  if (!left || !right) return null;
+  const omitted = 8 - left.length - right.length;
+  if ((halves.length === 1 && omitted !== 0) || (halves.length === 2 && omitted < 1)) return null;
+  const groups = [...left, ...Array.from({ length: omitted }, () => 0), ...right];
+  if (groups.length !== 8) return null;
+  return Uint8Array.from(groups.flatMap((group) => [group >> 8, group & 0xff]));
+}
+
+function hasPrefix(bytes: Uint8Array, prefix: readonly number[], bits: number): boolean {
+  const fullBytes = Math.floor(bits / 8);
+  for (let index = 0; index < fullBytes; index += 1) {
+    if (bytes[index] !== prefix[index]) return false;
+  }
+  const remainingBits = bits % 8;
+  if (remainingBits === 0) return true;
+  const mask = (0xff << (8 - remainingBits)) & 0xff;
+  return ((bytes[fullBytes] ?? 0) & mask) === ((prefix[fullBytes] ?? 0) & mask);
+}
+
+function isPrivateOrSpecialIpv4(ipv4: number[]): boolean {
+  const [a = 0, b = 0, c = 0] = ipv4;
+  return (
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 0) ||
+    (a === 192 && b === 88 && c === 99) ||
+    (a === 192 && b === 168) ||
+    (a === 198 && (b === 18 || b === 19)) ||
+    (a === 198 && b === 51 && c === 100) ||
+    (a === 203 && b === 0 && c === 113) ||
+    a >= 224
+  );
+}
+
 export function isPrivateOrSpecialAddress(rawAddress: string): boolean {
-  const address = rawAddress.toLowerCase().split("%")[0] ?? rawAddress.toLowerCase();
+  const address = normalizeHostname(rawAddress).split("%")[0] ?? normalizeHostname(rawAddress);
   const mapped = address.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/u)?.[1];
   const ipv4 = parseIpv4(mapped ?? address);
-  if (ipv4) {
-    const [a = 0, b = 0] = ipv4;
-    return (
-      a === 0 ||
-      a === 10 ||
-      a === 127 ||
-      (a === 100 && b >= 64 && b <= 127) ||
-      (a === 169 && b === 254) ||
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 0) ||
-      (a === 192 && b === 168) ||
-      (a === 198 && (b === 18 || b === 19)) ||
-      a >= 224
-    );
+  if (ipv4) return isPrivateOrSpecialIpv4(ipv4);
+  const ipv6 = parseIpv6(address);
+  if (!ipv6) return true;
+
+  // IPv4-mapped IPv6 is normalized by WHATWG URLs into hexadecimal form
+  // (for example ::ffff:7f00:1), so classify the embedded IPv4 bytes directly.
+  if (hasPrefix(ipv6, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff], 96)) {
+    return isPrivateOrSpecialIpv4(Array.from(ipv6.slice(12)));
   }
-  if (isIP(address) !== 6) {
-    return true;
-  }
+
+  // Fail closed outside ordinary global-unicast space, then exclude globally
+  // scoped transition/documentation ranges that can tunnel or translate IPv4.
+  if (!hasPrefix(ipv6, [0x20], 3)) return true;
   return (
-    address === "::" ||
-    address === "::1" ||
-    address.startsWith("fc") ||
-    address.startsWith("fd") ||
-    /^fe[89ab]/u.test(address) ||
-    address.startsWith("ff")
+    hasPrefix(ipv6, [0x20, 0x01, 0x00], 23) ||
+    hasPrefix(ipv6, [0x20, 0x02], 16) ||
+    hasPrefix(ipv6, [0x20, 0x01, 0x0d, 0xb8], 32)
   );
 }
 
@@ -193,7 +246,7 @@ export function createPinnedLookup(
   };
 }
 
-async function resolveSafeOutboundTarget(
+export async function resolveSafeOutboundTarget(
   rawUrl: string,
   policy: OutboundRequestPolicy,
 ): Promise<{ addresses: LookupResult[]; url: URL }> {

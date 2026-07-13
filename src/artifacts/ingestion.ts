@@ -1,5 +1,6 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { mkdtemp, rm, stat } from "node:fs/promises";
+import { isIP } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -12,10 +13,10 @@ import { isIpfsUrl, parseIpfsUrl } from "../shared/ipfs.js";
 import { resolveOptionalIntegerInput } from "../shared/numbers.js";
 import { createManagedOperatorSigner } from "../shared/operator.js";
 import {
-  assertSafeOutboundUrl,
   DEFAULT_OUTBOUND_MAX_BYTES,
   DEFAULT_OUTBOUND_TIMEOUT_MS,
   fetchBoundedOutbound,
+  resolveSafeOutboundTarget,
   UnsafeOutboundDestinationError,
 } from "../shared/outbound-request.js";
 import {
@@ -653,6 +654,42 @@ async function runGit(
   });
 }
 
+export function buildPinnedGitCloneArgs(input: {
+  address: string;
+  family: number;
+  ref?: string;
+  repositoryUrl: URL;
+  repoPath: string;
+}): string[] {
+  const hostname = input.repositoryUrl.hostname.replace(/^\[|\]$/gu, "");
+  const port =
+    input.repositoryUrl.port || (input.repositoryUrl.protocol === "https:" ? "443" : "80");
+  const pinnedAddress = input.family === 6 ? `[${input.address}]` : input.address;
+  const resolveConfig = `http.curloptResolve=+${hostname}:${port}:${pinnedAddress}`;
+  const cloneArgs = ["-c", "http.followRedirects=false"];
+  if (isIP(hostname) === 0) cloneArgs.push("-c", resolveConfig);
+  cloneArgs.push(
+    "clone",
+    // Persist the same policy in the new repository. Partial-clone object reads
+    // may contact the promisor remote after clone, and must remain pinned too.
+    "--config",
+    "http.followRedirects=false",
+  );
+  if (isIP(hostname) === 0) cloneArgs.push("--config", resolveConfig);
+  cloneArgs.push(
+    "--quiet",
+    "--depth",
+    "1",
+    "--no-tags",
+    "--single-branch",
+    "--filter=blob:limit=1048576",
+    "--no-checkout",
+  );
+  if (input.ref?.trim()) cloneArgs.push("--branch", input.ref.trim());
+  cloneArgs.push("--", input.repositoryUrl.toString(), input.repoPath);
+  return cloneArgs;
+}
+
 async function extractRepositoryReadme(repoPath: string, ref: string): Promise<string> {
   for (const candidate of README_CANDIDATES) {
     try {
@@ -697,7 +734,8 @@ async function snapshotRepositorySource(
   const artifactType =
     resolveOptionalIntegerInput(input.artifactType, "artifactType", { min: 1 }) ?? 1;
   const allowPrivateNetworks = allowPrivateCanaryNetwork(persistenceOptions);
-  const repositoryUrl = await assertSafeOutboundUrl(input.repositoryUrl, { allowPrivateNetworks });
+  const target = await resolveSafeOutboundTarget(input.repositoryUrl, { allowPrivateNetworks });
+  const repositoryUrl = target.url;
   if (repositoryUrl.protocol !== "https:" && !allowPrivateNetworks) {
     throw new UnsafeOutboundDestinationError("repository destination must use https");
   }
@@ -708,21 +746,16 @@ async function snapshotRepositorySource(
   const repoPath = path.join(tempRoot, "repo");
 
   try {
-    const cloneArgs = [
-      "-c",
-      "http.followRedirects=false",
-      "clone",
-      "--quiet",
-      "--depth",
-      "1",
-      "--no-tags",
-      "--single-branch",
-      "--filter=blob:limit=1048576",
-    ];
-    if (input.ref?.trim()) {
-      cloneArgs.push("--branch", input.ref.trim());
-    }
-    cloneArgs.push("--", repositoryUrl.toString(), repoPath);
+    const pinned = target.addresses[0];
+    if (!pinned)
+      throw new UnsafeOutboundDestinationError("repository destination has no pinned address");
+    const cloneArgs = buildPinnedGitCloneArgs({
+      address: pinned.address,
+      family: pinned.family,
+      ref: input.ref,
+      repositoryUrl,
+      repoPath,
+    });
     await runGit(cloneArgs);
 
     const resolvedRef = normalizeNonEmpty(input.ref, "HEAD");

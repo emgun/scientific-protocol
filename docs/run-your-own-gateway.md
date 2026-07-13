@@ -19,9 +19,10 @@ export SP_RUN_MIGRATIONS='false'
 export SP_INDEXER_CONFIRMATION_DEPTH='12'
 ```
 
-Do not put resolver, checkpoint-publisher, protocol-admin, author, replicator, agent-operator, AWS,
-or other funds-moving credentials in the public gateway. Set `SP_PUBLIC_SERVICE=true` in the
-public process; startup fails if privileged credentials or reference-canary mode are present.
+Do not put resolver, checkpoint-publisher, reward-settler, protocol-admin, author, replicator,
+agent-operator, AWS, or other funds-moving credentials in the public gateway. Set
+`SP_PUBLIC_SERVICE=true` in the public process; startup fails if privileged credentials (including
+their `_FILE` and `_SECRET_REF` forms) or reference-canary mode are present.
 
 ## 2. Run migrations once
 

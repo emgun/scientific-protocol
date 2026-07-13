@@ -34,6 +34,7 @@ type SourceSubmissionRecordRow = {
   discoveryMode: string;
   normalizedLocator: string;
   rawLocator: string;
+  requestHash: string | null;
   sourceId: string;
   submissionId: string;
   submissionOutcome: string;
@@ -416,6 +417,7 @@ function mapSourceSubmissionRecordRow(row: SourceSubmissionRecordRow): SourceSub
     discoveryMode: row.discoveryMode as SourceSubmissionRecordView["discoveryMode"],
     normalizedLocator: row.normalizedLocator,
     rawLocator: row.rawLocator,
+    requestHash: row.requestHash,
     sourceId: row.sourceId,
     submissionId: row.submissionId,
     submissionOutcome: row.submissionOutcome as SourceSubmissionOutcome,
@@ -698,6 +700,7 @@ export async function insertSourceSubmissionRecord(
     discoveryMode: SourceRecordView["discoveryMode"];
     normalizedLocator: string;
     rawLocator: string;
+    requestHash?: string | null;
     sourceId: string;
     submissionOutcome: SourceSubmissionOutcome;
     submittedByActor?: string | null;
@@ -714,8 +717,9 @@ export async function insertSourceSubmissionRecord(
         discovery_mode,
         submission_outcome,
         raw_locator,
-        normalized_locator
-      ) VALUES ($1, $2, lower($3), $4, $5, $6, $7, $8)
+        normalized_locator,
+        request_hash
+      ) VALUES ($1, $2, lower($3), $4, $5, $6, $7, $8, $9)
       RETURNING submission_id::text AS submission_id
     `,
     [
@@ -727,6 +731,7 @@ export async function insertSourceSubmissionRecord(
       input.submissionOutcome,
       input.rawLocator,
       input.normalizedLocator,
+      input.requestHash?.toLowerCase() ?? null,
     ],
   );
   const submissionId = result.rows[0]?.submission_id;
@@ -806,6 +811,7 @@ export async function readSourceSubmissionRecord(
         submission_outcome AS "submissionOutcome",
         raw_locator AS "rawLocator",
         normalized_locator AS "normalizedLocator",
+        request_hash AS "requestHash",
         created_at AS "createdAt"
       FROM source_submission_records
       WHERE submission_id = $1
@@ -814,6 +820,20 @@ export async function readSourceSubmissionRecord(
   );
   const row = result.rows[0];
   return row ? mapSourceSubmissionRecordRow(row) : undefined;
+}
+
+export async function readSourceSubmissionRecordByRequestHash(
+  queryable: Queryable,
+  requestHash: string,
+): Promise<SourceSubmissionRecordView | undefined> {
+  const result = await queryable.query<{ submissionId: string }>(
+    `SELECT submission_id::text AS "submissionId"
+     FROM source_submission_records
+     WHERE request_hash = lower($1)`,
+    [requestHash],
+  );
+  const submissionId = result.rows[0]?.submissionId;
+  return submissionId ? readSourceSubmissionRecord(queryable, submissionId) : undefined;
 }
 
 export async function readSourceSubmissionRecordsPage(
@@ -847,6 +867,7 @@ export async function readSourceSubmissionRecordsPage(
         submission_outcome AS "submissionOutcome",
         raw_locator AS "rawLocator",
         normalized_locator AS "normalizedLocator",
+        request_hash AS "requestHash",
         created_at AS "createdAt"
       FROM source_submission_records
       WHERE source_id = $1

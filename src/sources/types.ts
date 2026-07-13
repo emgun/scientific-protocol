@@ -53,6 +53,7 @@ export type SourceSubmissionRecordView = {
   discoveryMode: SourceDiscoveryMode;
   normalizedLocator: string;
   rawLocator: string;
+  requestHash: string | null;
   sourceId: string;
   submissionId: string;
   submissionOutcome: SourceSubmissionOutcome;

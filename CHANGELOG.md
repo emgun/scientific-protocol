@@ -19,16 +19,22 @@ All notable changes to the `scientific-protocol` package are documented here. Th
 - Separate latest-recorded and effective resolution-decision pointers. Markets settle only against
   the decision that established claim state; later incompatible evidence remains append-only.
 - Onchain idempotency for signed delegated claim creation, renewable execution leases,
-  transport-level DNS pinning, global client/actor source throttles, and resumable `source_submit`.
+  transport-level DNS pinning, global client/actor source throttles, and request-hash-idempotent
+  `source_submit` recovery.
 - One gated release chain publishes npm, then the immutable service image, then a GitHub Release;
   pull requests build and health-smoke the container without credentials.
 - Remote deployment now requires an explicit nonzero minimum author bond, sets it onchain, and
   records the identical default in deployment metadata and `/write-config`. Exact signed
   `claim_publish` replays reconcile already-published chain state under a fenced request lease.
+- Forecast commitments snapshot the current effective decision and can settle only against a newer
+  one, eliminating known-outcome bonus extraction while preserving forecasts across epistemic updates.
+- Operational bounty settlement is split from timelocked bond custody. Refund and slash recipients
+  are derived onchain and cannot be redirected by callers.
 
 ### ABI changes
 
-- `BondEscrow` now takes the replication registry as its third constructor argument.
+- `BondEscrow` now takes the replication registry and immutable slash treasury as its third and
+  fourth constructor arguments. `slashAuthorBond` and `refundAuthorBond` no longer accept recipients.
 - `reserveBountyPayout` derives the recipient from the named replication and removes the caller-
   supplied recipient argument. Reservations require a matching claim/replication pair, release
   requires a resolved replication, and `cancelReservedPayout` provides terminal cancellation.
@@ -41,9 +47,9 @@ All notable changes to the `scientific-protocol` package are documented here. Th
   author bond is deposited.
 - Resolved replications now produce append-only `ResolutionDecision` records through
   `finalizeClaimResolution`. Direct writes to resolution-derived claim statuses are rejected.
-- `EpistemicMarket.settleForecast` now accepts the latest claim `resolutionDecisionId`, not a
-  caller-supplied resolution status. `ForecastCommitment` and `ForecastSettled` expose that causal
-  decision id.
+- `EpistemicMarket.settleForecast` now accepts an effective claim `resolutionDecisionId`, not a
+  caller-supplied resolution status. `ForecastCommitment` exposes the effective-decision snapshot;
+  `ForecastSettled` exposes the strictly newer causal decision id.
 
 These contracts are non-upgradeable. Existing deployments remain readable history but cannot be
 relabelled as 0.3.0. Operators must deploy the complete 0.3.0 contract set and update deployment

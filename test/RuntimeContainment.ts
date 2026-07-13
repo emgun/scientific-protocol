@@ -8,11 +8,13 @@ import {
   resolveRateLimitBackend,
 } from "../src/api/rate-limit.js";
 import { assertPublicServiceCredentialBoundary } from "../src/api/runtime-security.js";
+import { buildPinnedGitCloneArgs } from "../src/artifacts/ingestion.js";
 import { resolveReplicationJob } from "../src/resolver/engine.js";
 import {
   assertSafeOutboundUrl,
   createPinnedLookup,
   fetchBoundedOutbound,
+  isPrivateOrSpecialAddress,
   OutboundResponseLimitError,
   UnsafeOutboundDestinationError,
 } from "../src/shared/outbound-request.js";
@@ -30,6 +32,8 @@ describe("RuntimeContainment", () => {
       "http://10.2.3.4/internal",
       "http://169.254.169.254/latest/meta-data",
       "http://[::1]/internal",
+      "http://[::ffff:7f00:1]/internal",
+      "http://[::ffff:a00:1]/internal",
       "http://metadata.google.internal/computeMetadata/v1",
     ]) {
       await assert.rejects(
@@ -37,6 +41,58 @@ describe("RuntimeContainment", () => {
         UnsafeOutboundDestinationError,
       );
     }
+  });
+
+  it("classifies mapped IPv4 and non-global IPv6 numerically", () => {
+    for (const address of [
+      "::ffff:7f00:1",
+      "::ffff:a00:1",
+      "::ffff:ac10:1",
+      "::ffff:c0a8:1",
+      "2001:db8::1",
+      "2002:7f00:1::",
+      "fc00::1",
+      "fe80::1",
+    ]) {
+      expect(isPrivateOrSpecialAddress(address), address).to.equal(true);
+    }
+    expect(isPrivateOrSpecialAddress("2606:4700:4700::1111")).to.equal(false);
+  });
+
+  it("pins git/libcurl to the validated address while retaining the TLS hostname", () => {
+    const args = buildPinnedGitCloneArgs({
+      address: "93.184.216.34",
+      family: 4,
+      ref: "main",
+      repositoryUrl: new URL("https://code.example/research/protocol.git"),
+      repoPath: "/tmp/repository",
+    });
+    expect(args).to.include("http.curloptResolve=+code.example:443:93.184.216.34");
+    expect(
+      args.filter((entry) => entry === "http.curloptResolve=+code.example:443:93.184.216.34"),
+    ).to.have.length(2);
+    expect(args.filter((entry) => entry === "http.followRedirects=false")).to.have.length(2);
+    expect(args).to.include("http.followRedirects=false");
+    expect(args).to.include("--no-checkout");
+    expect(args.slice(-3)).to.deep.equal([
+      "--",
+      "https://code.example/research/protocol.git",
+      "/tmp/repository",
+    ]);
+    const ipv6 = buildPinnedGitCloneArgs({
+      address: "2606:4700:4700::1111",
+      family: 6,
+      repositoryUrl: new URL("https://code.example/research/protocol.git"),
+      repoPath: "/tmp/repository",
+    });
+    expect(ipv6).to.include("http.curloptResolve=+code.example:443:[2606:4700:4700::1111]");
+    const literal = buildPinnedGitCloneArgs({
+      address: "2606:4700:4700::1111",
+      family: 6,
+      repositoryUrl: new URL("https://[2606:4700:4700::1111]/protocol.git"),
+      repoPath: "/tmp/repository",
+    });
+    expect(literal.some((entry) => entry.startsWith("http.curloptResolve="))).to.equal(false);
   });
 
   it("revalidates redirect destinations before following them", async () => {
@@ -122,6 +178,18 @@ describe("RuntimeContainment", () => {
         SP_OPERATOR_PRIVATE_KEY_FILE: "/run/secrets/operator",
       }),
     ).to.throw(/SP_OPERATOR_PRIVATE_KEY/);
+    expect(() =>
+      assertPublicServiceCredentialBoundary({
+        SP_PUBLIC_SERVICE: "true",
+        SP_REWARD_SETTLER_PRIVATE_KEY_FILE: "/run/secrets/reward-settler",
+      }),
+    ).to.throw(/SP_REWARD_SETTLER_PRIVATE_KEY/);
+    expect(() =>
+      assertPublicServiceCredentialBoundary({
+        SP_PUBLIC_SERVICE: "true",
+        SP_REWARD_SETTLER_PRIVATE_KEY_SECRET_REF: "reward-settler:latest",
+      }),
+    ).to.throw(/SP_REWARD_SETTLER_PRIVATE_KEY/);
     expect(() =>
       assertPublicServiceCredentialBoundary({
         SP_PUBLIC_SERVICE: "true",

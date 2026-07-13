@@ -417,6 +417,7 @@ export async function createProductionArtifactDraft(
   input: ProductionArtifactDraftInput,
   authorAddress: string,
   connection?: CoordinatorConnection,
+  options: { requestHash?: string | null } = {},
 ): Promise<ProductionArtifactDraftResult> {
   const ownsPool = typeof connection === "string" || connection === undefined;
   const pool =
@@ -426,6 +427,7 @@ export async function createProductionArtifactDraft(
   try {
     return await ingestSource(pool, input, {
       discoveryMode: "user_submitted",
+      requestHash: options.requestHash,
       submittedByActor: authorAddress,
     });
   } finally {

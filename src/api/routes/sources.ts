@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   assertAuthorizedSourcePublicationActor,
   authenticateSignedPublicWriteRequest,
@@ -52,12 +53,63 @@ export async function handleSourceWriteRoutes(context: RouteContext): Promise<bo
       allowRecordedReplayActionTypes: ["source_submit"],
       chainId: writeConfig.chainId,
     });
+    const requestLeaseRequired = authenticated.envelope.actionType === "source_submit";
+    const recordedRequest = authenticated.recordedReplay
+      ? await dependencies.readPublicWriteRequestByHash(pool, authenticated.requestHash)
+      : undefined;
+    const leaseOwner = randomUUID();
+    const leaseMs = 5 * 60 * 1000;
+    let heartbeat: NodeJS.Timeout | null = null;
+    let heartbeatError: Error | null = null;
+    let heartbeatRunning = false;
+    let acceptedReplay = false;
+    const renewLease = async () => {
+      if (!requestLeaseRequired) return;
+      if (heartbeatError) throw heartbeatError;
+      const renewed = await dependencies.renewPublicWriteRequestExecution(pool, {
+        leaseMs,
+        leaseOwner,
+        requestId: authenticated.acceptedRequestId,
+      });
+      if (!renewed) {
+        heartbeatError = new Error("public_write_request_execution_lease_lost");
+        throw heartbeatError;
+      }
+    };
+    if (requestLeaseRequired) {
+      const leaseAcquired = await dependencies.reservePublicWriteRequestExecution(pool, {
+        leaseMs,
+        leaseOwner,
+        requestId: authenticated.acceptedRequestId,
+      });
+      if (!leaseAcquired) throw new Error("public_write_request_in_progress");
+      heartbeat = setInterval(() => {
+        if (heartbeatRunning || heartbeatError) return;
+        heartbeatRunning = true;
+        renewLease()
+          .catch((error) => {
+            heartbeatError = error instanceof Error ? error : new Error(String(error));
+          })
+          .finally(() => {
+            heartbeatRunning = false;
+          });
+      }, 30_000);
+      heartbeat.unref();
+    }
     try {
       const payload = authenticated.envelope.payload;
       const draftInput = parseArtifactDraftPayload(payload);
       if (url.pathname === "/sources") {
         const canonical = canonicalizeSourceDraft(draftInput);
-        if (!authenticated.recordedReplay) {
+        const recordedSourceId = recordedRequest?.outcomeDetail?.match(/^source:(\d+)$/u)?.[1];
+        const recordedSource = recordedSourceId
+          ? await dependencies.readSourceRecord(pool, recordedSourceId)
+          : undefined;
+        acceptedReplay =
+          authenticated.recordedReplay &&
+          recordedRequest?.status === "accepted" &&
+          recordedSource?.canonicalSourceKey === canonical.canonicalSourceKey;
+        if (!acceptedReplay) {
           for (const [dimension, bucketKey] of [
             [
               "client",
@@ -96,7 +148,7 @@ export async function handleSourceWriteRoutes(context: RouteContext): Promise<bo
           canonical.canonicalSourceKey,
           authenticated.envelope.actorAddress,
         );
-        const throttle = authenticated.recordedReplay
+        const throttle = acceptedReplay
           ? { allowed: true, retryAfterSeconds: 0 }
           : await consumeConfiguredRateLimit({
               backend: rateLimitBackend,
@@ -120,28 +172,57 @@ export async function handleSourceWriteRoutes(context: RouteContext): Promise<bo
           return true;
         }
       }
+      await renewLease();
       const result = await dependencies.createProductionArtifactDraft(
         draftInput,
         authenticated.envelope.actorAddress,
         pool,
+        {
+          requestHash:
+            authenticated.envelope.actionType === "source_submit"
+              ? authenticated.requestHash
+              : null,
+        },
       );
-      await dependencies.markPublicWriteRequestAccepted(
-        pool,
-        authenticated.acceptedRequestId,
-        `source:${result.source.sourceId}`,
-      );
+      await renewLease();
+      if (!acceptedReplay) {
+        await dependencies.markPublicWriteRequestAccepted(
+          pool,
+          authenticated.acceptedRequestId,
+          `source:${result.source.sourceId}`,
+        );
+      }
       json(response, 200, {
         ok: true,
         requestId: authenticated.acceptedRequestId,
         result,
       });
     } catch (error) {
-      await dependencies.markPublicWriteRequestRejected(
-        pool,
-        authenticated.acceptedRequestId,
-        error instanceof Error ? error.message : String(error),
-      );
+      const canUpdateRequest = requestLeaseRequired
+        ? await dependencies
+            .assertPublicWriteRequestExecution(pool, {
+              leaseOwner,
+              requestId: authenticated.acceptedRequestId,
+            })
+            .then(() => true)
+            .catch(() => false)
+        : true;
+      if (canUpdateRequest) {
+        await dependencies.markPublicWriteRequestRejected(
+          pool,
+          authenticated.acceptedRequestId,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
       throw error;
+    } finally {
+      if (heartbeat) clearInterval(heartbeat);
+      if (requestLeaseRequired) {
+        await dependencies.releasePublicWriteRequestExecution(pool, {
+          leaseOwner,
+          requestId: authenticated.acceptedRequestId,
+        });
+      }
     }
     return true;
   }
