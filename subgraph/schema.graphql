@@ -1,0 +1,102 @@
+type Claim @entity(immutable: false) {
+  id: ID!
+  author: Bytes!
+  domainId: BigInt!
+  metadataHash: Bytes!
+  resolutionModule: Bytes!
+  requiredAuthorBond: BigInt!
+  status: Int!
+  revisionOf: Claim
+  createdAtBlock: BigInt!
+  updatedAtBlock: BigInt!
+  effectiveResolutionDecision: ResolutionDecision
+}
+
+type Artifact @entity(immutable: true) {
+  id: ID!
+  claim: Claim!
+  artifactType: Int!
+  contentDigest: Bytes!
+  uri: String!
+  submitter: Bytes!
+  createdAtBlock: BigInt!
+}
+
+type Replication @entity(immutable: false) {
+  id: ID!
+  claim: Claim!
+  replicator: Bytes!
+  agentId: BigInt!
+  resultHash: Bytes!
+  outcome: Int
+  resolutionStatus: Int
+  resolutionHash: Bytes
+  resolver: Bytes
+  confidenceBps: Int
+  resolverType: Int
+  evidenceHash: Bytes
+  evidenceURI: String
+  submittedAtBlock: BigInt!
+  resolvedAtBlock: BigInt
+}
+
+type ResolutionDecision @entity(immutable: true) {
+  id: ID!
+  claim: Claim!
+  replication: Replication!
+  resolutionModule: Bytes!
+  status: Int!
+  claimStatus: Int!
+  confidenceBps: Int!
+  resolutionHash: Bytes!
+  evidenceHash: Bytes!
+  resolverType: Int!
+  actor: Bytes!
+  createdAtBlock: BigInt!
+  createdAtTimestamp: BigInt!
+}
+
+type ReputationCheckpoint @entity(immutable: true) {
+  id: ID!
+  domainId: BigInt!
+  subjectType: Int!
+  subjectActor: Bytes!
+  subjectClaimId: BigInt!
+  subjectAgentId: BigInt!
+  subjectModule: Bytes!
+  scoreVectorHash: Bytes!
+  payloadHash: Bytes!
+  uri: String!
+  publisher: Bytes!
+  createdAtBlock: BigInt!
+}
+
+type Agent @entity(immutable: false) {
+  id: ID!
+  operator: Bytes!
+  metadataHash: Bytes!
+  uri: String!
+  spendLimit: BigInt!
+  budgetBalance: BigInt!
+  reservedBudget: BigInt!
+  spentBudget: BigInt!
+  active: Boolean!
+  createdAtBlock: BigInt!
+  updatedAtBlock: BigInt!
+}
+
+type GovernanceProposal @entity(immutable: false) {
+  id: ID!
+  proposer: Bytes!
+  targets: [Bytes!]!
+  values: [BigInt!]!
+  signatures: [String!]!
+  calldatas: [Bytes!]!
+  voteStart: BigInt!
+  voteEnd: BigInt!
+  description: String!
+  status: String!
+  etaSeconds: BigInt
+  createdAtBlock: BigInt!
+  updatedAtBlock: BigInt!
+}

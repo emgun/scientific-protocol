@@ -1,8 +1,9 @@
 import type http from "node:http";
 import type { URL } from "node:url";
 import type { Pool } from "pg";
+import type { ServiceMode } from "../../service/mode.js";
 import type { ApiDependencies } from "../dependencies.js";
-import type { ApiRateLimitConfig, RateLimitRecord } from "../rate-limit.js";
+import type { ApiRateLimitConfig, RateLimitBackend, RateLimitRecord } from "../rate-limit.js";
 
 export type RouteContext = {
   databaseUrl: string;
@@ -14,9 +15,11 @@ export type RouteContext = {
   pool: Pool;
   readModelOptionalApi: boolean;
   rateLimitConfig: ApiRateLimitConfig;
+  rateLimitBackend: RateLimitBackend;
   readModelPath: string;
   request: http.IncomingMessage;
   response: http.ServerResponse;
+  serviceMode: ServiceMode;
   sourceDuplicateCooldownBuckets: Map<string, RateLimitRecord>;
   url: URL;
 };

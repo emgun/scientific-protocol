@@ -14,6 +14,100 @@ All notable changes to the `scientific-protocol` package are documented here. Th
 - JSON Schemas in `schemas/` are versioned with the package. Additive, optional fields are patch
   changes; anything else is minor.
 
+## [0.3.0] — 2026-07-12
+
+- Separate latest-recorded and effective resolution-decision pointers. Markets settle only against
+  the decision that established claim state; later incompatible evidence remains append-only.
+- Onchain idempotency for signed delegated claim creation, renewable execution leases,
+  transport-level DNS pinning, global client/actor source throttles, and request-hash-idempotent
+  `source_submit` recovery.
+- One gated release chain publishes npm, then the immutable service image, then a GitHub Release;
+  pull requests build and health-smoke the container without credentials.
+- Remote deployment now requires an explicit nonzero minimum author bond, sets it onchain, and
+  records the identical default in deployment metadata and `/write-config`. Exact signed
+  `claim_publish` replays reconcile already-published chain state under a fenced request lease.
+- Forecast commitments snapshot the current effective decision and can settle only against a newer
+  one, eliminating known-outcome bonus extraction while preserving forecasts across epistemic updates.
+- Operational bounty settlement is split from timelocked bond custody. Refund and slash recipients
+  are derived onchain and cannot be redirected by callers.
+
+### ABI changes
+
+- `BondEscrow` now takes the replication registry and immutable slash treasury as its third and
+  fourth constructor arguments. `slashAuthorBond` and `refundAuthorBond` no longer accept recipients.
+- `refundAuthorBond` now credits `authorRefundCredits` instead of transferring value. The credited
+  author calls `withdrawAuthorBondRefund(amount, recipient)`; new credit and withdrawal events make
+  both steps independently indexable.
+- `reserveBountyPayout` derives the recipient from the named replication and removes the caller-
+  supplied recipient argument. Reservations require a matching claim/replication pair, release
+  requires a resolved replication, and `cancelReservedPayout` provides terminal cancellation.
+- `AgentRegistry.AgentRecord` adds `spentBudget`. Spend limits now cap lifetime consumed value plus
+  outstanding reservations and cannot be reduced below that committed amount.
+- `ReplicationRegistry` rejects modules that return `false` and exposes replication submitter and
+  resolution-state reads through `IReplicationRegistry`.
+- `ClaimRegistry` must be bound once to `BondEscrow` and `ReplicationRegistry` with
+  `configureProtocolDependencies`. A claim cannot enter `Published` until its complete declared
+  author bond is deposited.
+- Resolved replications now produce append-only `ResolutionDecision` records through
+  `finalizeClaimResolution`. Direct writes to resolution-derived claim statuses are rejected.
+- `EpistemicMarket.settleForecast` now accepts an effective claim `resolutionDecisionId`, not a
+  caller-supplied resolution status. `ForecastCommitment` exposes the effective-decision snapshot;
+  `ForecastSettled` exposes the strictly newer causal decision id.
+- `EpistemicMarket.forfeitUnrevealedForecast` permissionlessly finalizes expired unrevealed
+  forecasts without requiring a later claim decision and emits `ForecastForfeited` plus the
+  canonical no-decision `ForecastSettled` record.
+- Forecast and challenge payouts now accrue in `withdrawablePayouts`; beneficiaries call
+  `withdrawPayout(amount, recipient)`. The new payout-credit and withdrawal events replace
+  receiver-dependent transfers during terminal market transitions.
+
+These contracts are non-upgradeable. Existing deployments remain readable history but cannot be
+relabelled as 0.3.0. Operators must deploy the complete 0.3.0 contract set and update deployment
+metadata. See [docs/migrations/0.3.0.md](docs/migrations/0.3.0.md).
+
+### Added
+
+- A production multi-stage reference-service container with non-root execution, OCI provenance,
+  SBOM/attestation release automation, immutable version and commit tags, and a read-only default.
+- `scientific-protocol-service` CLI entrypoints for the gateway, migrations, one-shot sync,
+  recurring sync, review, replication, and artifact-maintenance workers.
+- Explicit `read-only` and `write-enabled` gateway modes, `/livez`, `/readyz`, release provenance,
+  and migration-aware readiness.
+- Executable JSON Schema compilation and OpenAPI/public-route conformance tests.
+- A public canonical resolution-status mapping. `Supported` recommends
+  `ProvisionallySupported`, `Qualified` recommends `Qualified`, `Inconclusive` and `Escalated`
+  recommend `UnderReplication`, and `Refuted`/`FraudSignal` recommend their matching terminal
+  outcome. `Pending` is not finalizable.
+- Durable source-ingestion leases, canonical indexer block-hash checkpoints, a fresh-database
+  rebuild command, checksummed/serialized migrations, versioned reputation policy, and a shared
+  Postgres write-rate limiter.
+- Bounded outbound requests with DNS/private-network containment and a public-service credential
+  boundary that rejects funds-moving keys and reference-canary execution.
+- A deployment-derived Graph subgraph for claims, artifacts, replications, checkpoints, agents,
+  and governance, with deterministic code generation and build validation.
+- A run-your-own gateway guide and executable TypeScript and Python external-agent examples using
+  only the public read surface.
+- Crash-resumable signed claim creation. The signed request hash is committed onchain, accepted
+  requests use expiring database execution leases, and retries reconcile existing claim and
+  artifact events before sending another transaction.
+
+### Changed
+
+- The published npm package now includes the compiled reference-service runtime and read-model
+  migrations. Service runtime libraries are production dependencies.
+- OpenAPI is versioned at 0.3.0 and correctly models GET and POST as operations on `/sources`.
+- API processes no longer run migrations implicitly; operators run the explicit migration command
+  as a release step.
+- Service-assisted claim publication is a two-step saga. `claim_create` creates an auditable draft;
+  the author deposits the declared bond directly and signs `claim_publish` before the operated
+  resolver requests `Published`. Replication work cannot open while publication is pending.
+- Internal collection readers exhaust pagination instead of inheriting public page caps. Remote
+  indexers hold a confirmation window and fail closed on a stored cursor/hash mismatch.
+- The reference indexer persists canonical resolution decisions and the exact decision id used to
+  settle each forecast.
+- Public claim creation requires an immutable artifact locator and the exact SHA-256 digest. The
+  gateway verifies retrieved bytes before any draft transaction and stores that digest in
+  `ArtifactRegistry`.
+
 ## [0.2.2] — 2026-07-10
 
 ### Added

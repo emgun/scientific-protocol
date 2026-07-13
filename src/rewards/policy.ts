@@ -27,6 +27,7 @@ import type { ReviewSubmissionView, ReviewTaskView } from "../review/types.js";
 import { getContract } from "../shared/contracts.js";
 import { getDeploymentPath, loadDeploymentFile } from "../shared/deployment.js";
 import { createManagedOperatorSigner } from "../shared/operator.js";
+import { readAllPages } from "../shared/pagination.js";
 import type { ChallengeView, ForecastView, ReplicationView } from "../shared/read-model.js";
 import { buildClaimWorkGraph, toClaimWorkRunView } from "../work/graph.js";
 import type { ClaimWorkGraphView } from "../work/types.js";
@@ -1054,41 +1055,41 @@ export async function applyAutomaticRewardPolicy(options: {
       replicationsPage,
       maintenanceTasksPage,
     ] = await Promise.all([
-      readClaimsPage(pool, {
-        domainId: options.domainId,
-        limit: 1000,
-        offset: 0,
-      }),
-      readChallengesPage(pool, { limit: 1000, offset: 0 }),
-      readForecastsPage(pool, { limit: 1000, offset: 0 }),
-      readReviewTasksPage(pool, { claimId: options.claimId, limit: 1000, offset: 0 }),
-      readReviewSubmissionsPage(pool, { claimId: options.claimId, limit: 1000, offset: 0 }),
-      readReplicationJobsPage(pool, { claimId: options.claimId, limit: 1000, offset: 0 }),
-      readReplicationsPage(pool, { limit: 1000, offset: 0 }),
-      readArtifactMaintenanceTasksPage(pool, { limit: 1000, offset: 0 }),
+      readAllPages((pagination) =>
+        readClaimsPage(pool, { ...pagination, domainId: options.domainId }),
+      ),
+      readAllPages((pagination) => readChallengesPage(pool, pagination)),
+      readAllPages((pagination) => readForecastsPage(pool, pagination)),
+      readAllPages((pagination) =>
+        readReviewTasksPage(pool, { ...pagination, claimId: options.claimId }),
+      ),
+      readAllPages((pagination) =>
+        readReviewSubmissionsPage(pool, { ...pagination, claimId: options.claimId }),
+      ),
+      readAllPages((pagination) =>
+        readReplicationJobsPage(pool, { ...pagination, claimId: options.claimId }),
+      ),
+      readAllPages((pagination) => readReplicationsPage(pool, pagination)),
+      readAllPages((pagination) => readArtifactMaintenanceTasksPage(pool, pagination)),
     ]);
 
     const claimIds = new Set(
-      claimsPage.items
+      claimsPage
         .filter((claim) => options.claimId === undefined || claim.claimId === options.claimId)
         .map((claim) => claim.claimId),
     );
-    const filteredReviewTasks = reviewTasksPage.items.filter(
+    const filteredReviewTasks = reviewTasksPage.filter(
       (task) => typeof task.claimId === "string" && claimIds.has(task.claimId),
     );
-    const filteredReviewSubmissions = reviewSubmissionsPage.items.filter(
+    const filteredReviewSubmissions = reviewSubmissionsPage.filter(
       (submission) => typeof submission.claimId === "string" && claimIds.has(submission.claimId),
     );
-    const filteredReplicationJobs = replicationJobsPage.items.filter((job) =>
-      claimIds.has(job.claimId),
-    );
-    const filteredChallenges = challengesPage.items.filter((challenge) =>
+    const filteredReplicationJobs = replicationJobsPage.filter((job) => claimIds.has(job.claimId));
+    const filteredChallenges = challengesPage.filter((challenge) =>
       claimIds.has(challenge.claimId),
     );
-    const filteredForecasts = forecastsPage.items.filter((forecast) =>
-      claimIds.has(forecast.claimId),
-    );
-    const filteredReplications = replicationsPage.items.filter((replication) =>
+    const filteredForecasts = forecastsPage.filter((forecast) => claimIds.has(forecast.claimId));
+    const filteredReplications = replicationsPage.filter((replication) =>
       claimIds.has(replication.claimId),
     );
     const artifactKeyToClaimId = new Map<string, string>();
@@ -1119,7 +1120,7 @@ export async function applyAutomaticRewardPolicy(options: {
         artifactKeyToClaimId.set(job.resultArtifactKey, job.claimId);
       }
     }
-    const filteredMaintenanceTasks = maintenanceTasksPage.items
+    const filteredMaintenanceTasks = maintenanceTasksPage
       .map((task) => ({
         ...task,
         claimId: artifactKeyToClaimId.get(task.artifactKey) ?? null,
@@ -1210,7 +1211,7 @@ export async function applyAutomaticRewardPolicy(options: {
     );
 
     const calibrationHistory = buildAgentCalibrationHistory(
-      claimsPage.items.filter((claim) => claimIds.has(claim.claimId)),
+      claimsPage.filter((claim) => claimIds.has(claim.claimId)),
       filteredReviewSubmissions,
     );
     const deployment = await loadDeploymentFile(getDeploymentPath(env), { env });

@@ -5,6 +5,16 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { expect } from "chai";
 import {
+  CHECKPOINT_OPERATOR_ROLES,
+  CLAIM_SUBMITTER_OPERATOR_ROLES,
+  LOCAL_DEPLOYMENT_BOOTSTRAP_ROLES,
+  PRODUCTION_DEPLOYMENT_KEY_ENV_KEYS,
+  RESOLVER_OPERATOR_ROLES,
+  resolveMinimumAuthorBondWei,
+  TIMELOCK_MANAGED_ROLES,
+  validateDeploymentSignerTopology,
+} from "../script/deploy-protocol.js";
+import {
   type DeploymentFile,
   deploymentFileExists,
   getDeploymentPath,
@@ -38,9 +48,82 @@ const sampleDeployment: DeploymentFile = {
   deployedAt: "2026-03-17T00:00:00.000Z",
   deploymentBlock: 123,
   network: "base-sepolia",
+  operators: {
+    deployer: "0x0000000000000000000000000000000000000020",
+    claimSubmitter: "0x0000000000000000000000000000000000000021",
+    replicationSubmitter: "0x0000000000000000000000000000000000000022",
+    resolverOperator: "0x0000000000000000000000000000000000000023",
+    checkpointPublisher: "0x0000000000000000000000000000000000000024",
+  },
+  parameters: { minimumAuthorBondWei: "5000000000000000" },
 };
 
 describe("DeploymentFile", () => {
+  it("keeps author-bond custody timelocked and bounty settlement operational", () => {
+    expect(LOCAL_DEPLOYMENT_BOOTSTRAP_ROLES).not.to.include("ESCROW_ADMIN_ROLE");
+    expect(RESOLVER_OPERATOR_ROLES).to.include("BOUNTY_SETTLER_ROLE");
+    expect(RESOLVER_OPERATOR_ROLES).not.to.include("ESCROW_ADMIN_ROLE");
+    expect(TIMELOCK_MANAGED_ROLES).to.include("ESCROW_ADMIN_ROLE");
+    expect(CLAIM_SUBMITTER_OPERATOR_ROLES).to.deep.equal(["CLAIM_SUBMITTER_ROLE"]);
+    expect(CHECKPOINT_OPERATOR_ROLES).to.deep.equal([
+      "CHECKPOINT_PUBLISHER_ROLE",
+      "REWARD_SETTLER_ROLE",
+    ]);
+    expect(new Set(LOCAL_DEPLOYMENT_BOOTSTRAP_ROLES).size).to.equal(
+      LOCAL_DEPLOYMENT_BOOTSTRAP_ROLES.length,
+    );
+  });
+
+  it("requires explicit distinct deployment signers on remote chains", () => {
+    const addresses = {
+      admin: "0x0000000000000000000000000000000000000001",
+      claimSubmitter: "0x0000000000000000000000000000000000000002",
+      checkpointPublisher: "0x0000000000000000000000000000000000000003",
+      replicationSubmitter: "0x0000000000000000000000000000000000000004",
+      resolver: "0x0000000000000000000000000000000000000005",
+    };
+    const remoteEnv = Object.fromEntries(
+      PRODUCTION_DEPLOYMENT_KEY_ENV_KEYS.map((key, index) => [key, `key-${index}`]),
+    );
+
+    expect(() => validateDeploymentSignerTopology(31337n, {}, addresses)).not.to.throw();
+    expect(() => validateDeploymentSignerTopology(84532n, {}, addresses)).to.throw(
+      /remote deployments require dedicated signer keys/,
+    );
+    expect(() => validateDeploymentSignerTopology(84532n, remoteEnv, addresses)).not.to.throw();
+    expect(() =>
+      validateDeploymentSignerTopology(84532n, remoteEnv, {
+        ...addresses,
+        resolver: addresses.admin.toUpperCase(),
+      }),
+    ).to.throw(/admin\/resolver/);
+  });
+
+  it("uses one explicit nonzero author-bond floor for remote deployments", () => {
+    expect(() => resolveMinimumAuthorBondWei({})).to.throw(/require SP_MIN_AUTHOR_BOND/);
+    expect(resolveMinimumAuthorBondWei({}, { localDevelopment: true })).to.equal(
+      5_000_000_000_000_000n,
+    );
+    expect(resolveMinimumAuthorBondWei({ SP_MIN_AUTHOR_BOND_ETH: "0.01" })).to.equal(
+      10_000_000_000_000_000n,
+    );
+    expect(resolveMinimumAuthorBondWei({ SP_MIN_AUTHOR_BOND_WEI: "7" })).to.equal(7n);
+    expect(() => resolveMinimumAuthorBondWei({ SP_MIN_AUTHOR_BOND_WEI: "0" })).to.throw(
+      /nonzero minimum author bond/,
+    );
+    expect(() => resolveMinimumAuthorBondWei({ SP_MIN_AUTHOR_BOND_ETH: "-0.001" })).to.throw(
+      /cannot be negative/,
+    );
+    expect(
+      resolveMinimumAuthorBondWei({ SP_MIN_AUTHOR_BOND_WEI: "0" }, { localDevelopment: true }),
+    ).to.equal(0n);
+    expect(() =>
+      resolveMinimumAuthorBondWei({
+        SP_MIN_AUTHOR_BOND_ETH: "0.01",
+        SP_MIN_AUTHOR_BOND_WEI: "1",
+      }),
+    ).to.throw(/only one/);
+  });
   it("resolves deployment paths from explicit env input", () => {
     expect(getDeploymentPath({ SP_DEPLOYMENT_PATH: " ops/staging.addresses.json " })).to.equal(
       "ops/staging.addresses.json",
@@ -138,13 +221,49 @@ describe("DeploymentFile", () => {
       }),
       /failed to parse deployment file from SP_DEPLOYMENT_JSON: deployment file from SP_DEPLOYMENT_JSON has invalid deployedAt/,
     );
+    const { parameters: _parameters, ...withoutParameters } = sampleDeployment;
+    await assert.rejects(
+      loadDeploymentFile(undefined, {
+        env: { SP_DEPLOYMENT_JSON: JSON.stringify(withoutParameters) },
+      }),
+      /missing parameters/,
+    );
+
+    const { operators: _operators, ...withoutOperators } = sampleDeployment;
+    await assert.rejects(
+      loadDeploymentFile(undefined, {
+        env: { SP_DEPLOYMENT_JSON: JSON.stringify(withoutOperators) },
+      }),
+      /missing operators/,
+    );
+    await assert.rejects(
+      loadDeploymentFile(undefined, {
+        env: {
+          SP_DEPLOYMENT_JSON: JSON.stringify({
+            ...sampleDeployment,
+            operators: {
+              ...sampleDeployment.operators,
+              claimSubmitter: sampleDeployment.operators.deployer,
+            },
+          }),
+        },
+      }),
+      /duplicate operator addresses/,
+    );
   });
 
   it("saves and loads deployment metadata through gcs paths", async () => {
     const objects = new Map<string, string>();
+    let savedMetadata: Record<string, string> | undefined;
     const fakeClient = {
-      async saveObject(input: { bucket: string; key: string; body: string }): Promise<void> {
+      async saveObject(input: {
+        bucket: string;
+        key: string;
+        body: string;
+        metadata?: Record<string, string>;
+      }): Promise<void> {
         objects.set(`${input.bucket}/${input.key}`, input.body);
+        savedMetadata = input.metadata;
       },
       async readObject(input: { bucket: string; key: string }): Promise<string> {
         return objects.get(`${input.bucket}/${input.key}`) ?? "";
@@ -156,6 +275,13 @@ describe("DeploymentFile", () => {
 
     const deploymentPath = "gs://sp-demo/runtime/staging.addresses.json";
     await saveDeploymentFile(sampleDeployment, deploymentPath, { gcsClient: fakeClient });
+    expect(savedMetadata).to.include({
+      deployer: sampleDeployment.operators.deployer,
+      claimSubmitter: sampleDeployment.operators.claimSubmitter,
+      replicationSubmitter: sampleDeployment.operators.replicationSubmitter,
+      resolverOperator: sampleDeployment.operators.resolverOperator,
+      checkpointPublisher: sampleDeployment.operators.checkpointPublisher,
+    });
     expect(await deploymentFileExists(deploymentPath, { gcsClient: fakeClient })).to.equal(true);
     expect(await loadDeploymentFile(deploymentPath, { gcsClient: fakeClient })).to.deep.equal(
       sampleDeployment,

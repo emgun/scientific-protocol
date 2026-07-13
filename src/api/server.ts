@@ -9,7 +9,8 @@ import {
   migrateReadModelDb,
   ReadModelSyncInProgressError,
 } from "../indexer/store.js";
-import { isMainModule, readPositiveIntegerEnv } from "../shared/cli.js";
+import { resolveServiceMode, type ServiceMode, serviceWritesEnabled } from "../service/mode.js";
+import { isMainModule, readBooleanEnv, readPositiveIntegerEnv } from "../shared/cli.js";
 import { getRpcUrl } from "../shared/contracts.js";
 import { getDeploymentPath } from "../shared/deployment.js";
 import {
@@ -28,11 +29,12 @@ import {
   MAX_JSON_BODY_BYTES,
 } from "./http.js";
 import {
-  consumeRateLimit,
+  consumeConfiguredRateLimit,
   demoRateLimitScope,
   type PartialApiRateLimitConfig,
   type RateLimitRecord,
   requestClientKey,
+  resolveRateLimitBackend,
   resolveRateLimitConfig,
 } from "./rate-limit.js";
 import { handleAgentActionRoutes, handleAgentReadRoutes } from "./routes/agents.js";
@@ -47,6 +49,7 @@ import { handleRewardRoutes } from "./routes/rewards.js";
 import { handleSourceReadRoutes, handleSourceWriteRoutes } from "./routes/sources.js";
 import { handleOperatorRequestRoutes, handleSystemRoutes } from "./routes/system.js";
 import { handleWorkLifecycleRoutes, handleWorkReadRoutes } from "./routes/work.js";
+import { assertPublicServiceCredentialBoundary } from "./runtime-security.js";
 
 export type { ApiDependencies } from "./dependencies.js";
 export type {
@@ -67,6 +70,7 @@ export type ApiServerOptions = {
   rateLimitConfig?: PartialApiRateLimitConfig;
   readModelPath?: string;
   runMigrations?: boolean;
+  serviceMode?: ServiceMode;
   dependencies?: Partial<ApiDependencies>;
 };
 
@@ -99,6 +103,7 @@ const routeHandlers: RouteHandler[] = [
 
 export async function createApiServer(options: ApiServerOptions = {}): Promise<ApiServerInstance> {
   const env = options.env ?? process.env;
+  assertPublicServiceCredentialBoundary(env);
   const readModelOptionalApi = isReadModelOptionalApi(env);
   const databaseUrl = options.databaseUrl ?? getDatabaseUrl(env);
   const deploymentPath = options.deploymentPath ?? getDeploymentPath(env);
@@ -115,6 +120,10 @@ export async function createApiServer(options: ApiServerOptions = {}): Promise<A
     ...options.dependencies,
   };
   const rateLimitConfig = resolveRateLimitConfig(options.rateLimitConfig, env);
+  const rateLimitBackend = options.dependencies
+    ? resolveRateLimitBackend({ ...env, NODE_ENV: "test", SP_RATE_LIMIT_BACKEND: "memory" })
+    : resolveRateLimitBackend(env);
+  const serviceMode = options.serviceMode ?? resolveServiceMode(env);
   const rateLimitBuckets = new Map<string, RateLimitRecord>();
   const sourceDuplicateCooldownBuckets = new Map<string, RateLimitRecord>();
 
@@ -132,19 +141,28 @@ export async function createApiServer(options: ApiServerOptions = {}): Promise<A
       applyPublicCorsHeaders(request, response, url, env);
       const isReadRequest = request.method === "GET" || request.method === "HEAD";
       const includeReadBody = request.method !== "HEAD";
+      const readOnlyMutation =
+        !serviceWritesEnabled(serviceMode) &&
+        ((!isReadRequest && request.method !== "OPTIONS") || url.pathname === "/admin/sync");
+      if (readOnlyMutation) {
+        response.setHeader("Allow", "GET, HEAD, OPTIONS");
+        json(response, 405, { error: "service_read_only", serviceMode });
+        return;
+      }
       const rateLimitScope = demoRateLimitScope(url, request.method, env);
       if (
         rateLimitScope &&
         rateLimitScope !== "sourceSubmission" &&
         rateLimitScope !== "agentSourceSubmission"
       ) {
-        const result = consumeRateLimit(
+        const result = await consumeConfiguredRateLimit({
+          backend: rateLimitBackend,
+          bucketKey: `${rateLimitScope}:${requestClientKey(request, rateLimitConfig.trustProxy)}`,
+          buckets: rateLimitBuckets,
+          pool,
           response,
-          rateLimitBuckets,
-          rateLimitScope,
-          requestClientKey(request, rateLimitConfig.trustProxy),
-          rateLimitConfig[rateLimitScope],
-        );
+          rule: rateLimitConfig[rateLimitScope],
+        });
         if (!result.allowed) {
           json(response, 429, {
             error: "rate_limited",
@@ -165,9 +183,11 @@ export async function createApiServer(options: ApiServerOptions = {}): Promise<A
         pool,
         readModelOptionalApi,
         rateLimitConfig,
+        rateLimitBackend,
         readModelPath,
         request,
         response,
+        serviceMode,
         sourceDuplicateCooldownBuckets,
         url,
       };
@@ -237,6 +257,37 @@ export async function createApiServer(options: ApiServerOptions = {}): Promise<A
           error: "json_body_too_large",
           maxBytes: MAX_JSON_BODY_BYTES,
         });
+        return;
+      }
+
+      if (error instanceof Error && error.message === "source_ingestion_in_progress") {
+        json(response, 409, { error: "source_ingestion_in_progress" });
+        return;
+      }
+
+      if (error instanceof Error && error.message === "public_write_request_in_progress") {
+        json(response, 409, { error: "public_write_request_in_progress" });
+        return;
+      }
+
+      if (
+        error instanceof Error &&
+        error.message === "public_write_request_reconciliation_mismatch"
+      ) {
+        json(response, 409, { error: "public_write_request_reconciliation_mismatch" });
+        return;
+      }
+
+      if (error instanceof Error && error.message === "rate_limit_store_unavailable") {
+        json(response, 503, { error: "rate_limit_store_unavailable" });
+        return;
+      }
+
+      if (
+        error instanceof Error &&
+        (error.message === "claim_author_bond_unsatisfied" || error.message === "claim_not_draft")
+      ) {
+        json(response, 409, { error: error.message });
         return;
       }
 
@@ -387,7 +438,10 @@ export async function createApiServer(options: ApiServerOptions = {}): Promise<A
 
 export async function startApiServerFromEnv(env: NodeJS.ProcessEnv = process.env): Promise<void> {
   const port = readPositiveIntegerEnv(env, "PORT", 3000);
-  const instance = await createApiServer({ env });
+  const instance = await createApiServer({
+    env,
+    runMigrations: readBooleanEnv(env, "SP_RUN_MIGRATIONS", false),
+  });
   const { server } = instance;
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   assertAuthorizedSourcePublicationActor,
   authenticateSignedPublicWriteRequest,
@@ -10,8 +11,8 @@ import {
   parseIntegerParam,
 } from "../params.js";
 import {
-  consumeDuplicateCooldown,
-  recordDuplicateCooldown,
+  consumeConfiguredRateLimit,
+  requestClientKey,
   sourceDuplicateCooldownKey,
 } from "../rate-limit.js";
 import {
@@ -32,6 +33,7 @@ export async function handleSourceWriteRoutes(context: RouteContext): Promise<bo
     env,
     pool,
     rateLimitConfig,
+    rateLimitBackend,
     readModelPath,
     request,
     response,
@@ -48,24 +50,140 @@ export async function handleSourceWriteRoutes(context: RouteContext): Promise<bo
         url.pathname === "/sources"
           ? ["source_submit", "claim_draft_from_artifact"]
           : "claim_draft_from_artifact",
+      allowRecordedReplayActionTypes: ["source_submit"],
       chainId: writeConfig.chainId,
     });
+    const recordedRequest = authenticated.recordedReplay
+      ? await dependencies.readPublicWriteRequestByHash(pool, authenticated.requestHash)
+      : undefined;
+    const payload = authenticated.envelope.payload;
+    let draftInput: ReturnType<typeof parseArtifactDraftPayload>;
     try {
-      const payload = authenticated.envelope.payload;
-      const draftInput = parseArtifactDraftPayload(payload);
-      if (url.pathname === "/sources") {
-        const canonical = canonicalizeSourceDraft(draftInput);
+      draftInput = parseArtifactDraftPayload(payload);
+    } catch (error) {
+      if (recordedRequest?.status !== "accepted") {
+        await dependencies.markPublicWriteRequestRejected(
+          pool,
+          authenticated.acceptedRequestId,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+      throw error;
+    }
+    const canonical = url.pathname === "/sources" ? canonicalizeSourceDraft(draftInput) : null;
+    let acceptedReplay = false;
+    if (recordedRequest?.status === "accepted") {
+      const recordedSourceId = recordedRequest.outcomeDetail?.match(/^source:(\d+)$/u)?.[1];
+      const [recordedSource, recordedSubmission] = await Promise.all([
+        recordedSourceId ? dependencies.readSourceRecord(pool, recordedSourceId) : undefined,
+        dependencies.readSourceSubmissionRecordByRequestHash(pool, authenticated.requestHash),
+      ]);
+      if (
+        authenticated.envelope.actionType !== "source_submit" ||
+        !canonical ||
+        !recordedSourceId ||
+        !recordedSource ||
+        recordedSource.canonicalSourceKey !== canonical.canonicalSourceKey ||
+        !recordedSubmission ||
+        recordedSubmission.requestHash?.toLowerCase() !== authenticated.requestHash.toLowerCase() ||
+        recordedSubmission.sourceId !== recordedSourceId ||
+        recordedSubmission.canonicalSourceKey !== canonical.canonicalSourceKey
+      ) {
+        throw new Error("public_write_request_reconciliation_mismatch");
+      }
+      acceptedReplay = true;
+    }
+    const requestLeaseRequired =
+      authenticated.envelope.actionType === "source_submit" && !acceptedReplay;
+    const leaseOwner = randomUUID();
+    const leaseMs = 5 * 60 * 1000;
+    let heartbeat: NodeJS.Timeout | null = null;
+    let heartbeatError: Error | null = null;
+    let heartbeatRunning = false;
+    const renewLease = async () => {
+      if (!requestLeaseRequired) return;
+      if (heartbeatError) throw heartbeatError;
+      const renewed = await dependencies.renewPublicWriteRequestExecution(pool, {
+        leaseMs,
+        leaseOwner,
+        requestId: authenticated.acceptedRequestId,
+      });
+      if (!renewed) {
+        heartbeatError = new Error("public_write_request_execution_lease_lost");
+        throw heartbeatError;
+      }
+    };
+    if (requestLeaseRequired) {
+      const leaseAcquired = await dependencies.reservePublicWriteRequestExecution(pool, {
+        leaseMs,
+        leaseOwner,
+        requestId: authenticated.acceptedRequestId,
+      });
+      if (!leaseAcquired) throw new Error("public_write_request_in_progress");
+      heartbeat = setInterval(() => {
+        if (heartbeatRunning || heartbeatError) return;
+        heartbeatRunning = true;
+        renewLease()
+          .catch((error) => {
+            heartbeatError = error instanceof Error ? error : new Error(String(error));
+          })
+          .finally(() => {
+            heartbeatRunning = false;
+          });
+      }, 30_000);
+      heartbeat.unref();
+    }
+    try {
+      if (url.pathname === "/sources" && canonical) {
+        if (!acceptedReplay) {
+          for (const [dimension, bucketKey] of [
+            [
+              "client",
+              `sourceSubmission:client:${requestClientKey(request, rateLimitConfig.trustProxy)}`,
+            ],
+            [
+              "actor",
+              `sourceSubmission:actor:${authenticated.envelope.actorAddress.toLowerCase()}`,
+            ],
+          ] as const) {
+            const globalThrottle = await consumeConfiguredRateLimit({
+              backend: rateLimitBackend,
+              bucketKey,
+              buckets: sourceDuplicateCooldownBuckets,
+              pool,
+              response,
+              rule: rateLimitConfig.sourceSubmission,
+            });
+            if (!globalThrottle.allowed) {
+              await dependencies.markPublicWriteRequestRejected(
+                pool,
+                authenticated.acceptedRequestId,
+                `rate_limited:sourceSubmission:${dimension}`,
+              );
+              json(response, 429, {
+                error: "rate_limited",
+                retryAfterSeconds: globalThrottle.retryAfterSeconds,
+                scope: "sourceSubmission",
+              });
+              return true;
+            }
+          }
+        }
         const duplicateCooldownBucketKey = sourceDuplicateCooldownKey(
           "sourceSubmission",
           canonical.canonicalSourceKey,
           authenticated.envelope.actorAddress,
         );
-        const throttle = consumeDuplicateCooldown(
-          response,
-          sourceDuplicateCooldownBuckets,
-          duplicateCooldownBucketKey,
-          rateLimitConfig.sourceSubmission,
-        );
+        const throttle = acceptedReplay
+          ? { allowed: true, retryAfterSeconds: 0 }
+          : await consumeConfiguredRateLimit({
+              backend: rateLimitBackend,
+              bucketKey: duplicateCooldownBucketKey,
+              buckets: sourceDuplicateCooldownBuckets,
+              pool,
+              response,
+              rule: rateLimitConfig.sourceSubmission,
+            });
         if (!throttle.allowed) {
           await dependencies.markPublicWriteRequestRejected(
             pool,
@@ -80,40 +198,64 @@ export async function handleSourceWriteRoutes(context: RouteContext): Promise<bo
           return true;
         }
       }
-      const result = await dependencies.createProductionArtifactDraft(
-        draftInput,
-        authenticated.envelope.actorAddress,
-        pool,
-      );
-      if (url.pathname === "/sources" && result.submissionOutcome === "duplicate") {
-        const canonical = canonicalizeSourceDraft(draftInput);
-        recordDuplicateCooldown(
-          sourceDuplicateCooldownBuckets,
-          sourceDuplicateCooldownKey(
-            "sourceSubmission",
-            canonical.canonicalSourceKey,
+      await renewLease();
+      const result = acceptedReplay
+        ? await dependencies.reconstructSourceSubmission(pool, draftInput, {
+            requestHash: authenticated.requestHash,
+            submittedByActor: authenticated.envelope.actorAddress,
+          })
+        : await dependencies.createProductionArtifactDraft(
+            draftInput,
             authenticated.envelope.actorAddress,
-          ),
-          rateLimitConfig.sourceSubmission,
+            pool,
+            {
+              requestHash:
+                authenticated.envelope.actionType === "source_submit"
+                  ? authenticated.requestHash
+                  : null,
+            },
+          );
+      await renewLease();
+      if (!acceptedReplay) {
+        await dependencies.markPublicWriteRequestAccepted(
+          pool,
+          authenticated.acceptedRequestId,
+          `source:${result.source.sourceId}`,
         );
       }
-      await dependencies.markPublicWriteRequestAccepted(
-        pool,
-        authenticated.acceptedRequestId,
-        `source:${result.source.sourceId}`,
-      );
       json(response, 200, {
         ok: true,
         requestId: authenticated.acceptedRequestId,
         result,
       });
     } catch (error) {
-      await dependencies.markPublicWriteRequestRejected(
-        pool,
-        authenticated.acceptedRequestId,
-        error instanceof Error ? error.message : String(error),
-      );
+      const canUpdateRequest = acceptedReplay
+        ? false
+        : requestLeaseRequired
+          ? await dependencies
+              .assertPublicWriteRequestExecution(pool, {
+                leaseOwner,
+                requestId: authenticated.acceptedRequestId,
+              })
+              .then(() => true)
+              .catch(() => false)
+          : true;
+      if (canUpdateRequest) {
+        await dependencies.markPublicWriteRequestRejected(
+          pool,
+          authenticated.acceptedRequestId,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
       throw error;
+    } finally {
+      if (heartbeat) clearInterval(heartbeat);
+      if (requestLeaseRequired) {
+        await dependencies.releasePublicWriteRequestExecution(pool, {
+          leaseOwner,
+          requestId: authenticated.acceptedRequestId,
+        });
+      }
     }
     return true;
   }

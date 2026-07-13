@@ -158,4 +158,19 @@ library ProtocolTypes {
         uint256 resolvedAt;
         address resolver;
     }
+
+    struct ResolutionDecision {
+        uint256 decisionId;
+        uint256 claimId;
+        uint256 replicationId;
+        address resolutionModule;
+        ResolutionStatus status;
+        ClaimStatus claimStatus;
+        uint16 confidenceBps;
+        bytes32 resolutionHash;
+        bytes32 evidenceHash;
+        ResolverType resolverType;
+        uint256 createdAt;
+        address actor;
+    }
 }

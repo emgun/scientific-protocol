@@ -1,10 +1,49 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { describe, it } from "node:test";
 import { expect } from "chai";
 import { createDemoClaim } from "../src/demo/actions.js";
 import { resolveIntegerInput } from "../src/shared/numbers.js";
+import {
+  resolveProductionClaimPublicationAction,
+  runClaimCreationSaga,
+  verifyProductionClaimArtifact,
+} from "../src/submission/actions.js";
 
 describe("production submission", () => {
+  it("reconciles canonical published state without weakening author or bond checks", () => {
+    const author = "0x00000000000000000000000000000000000000aa";
+    expect(
+      resolveProductionClaimPublicationAction({
+        actualAuthor: author,
+        requestedAuthor: author.toUpperCase(),
+        status: 1,
+      }),
+    ).to.equal("reconciled");
+    expect(() =>
+      resolveProductionClaimPublicationAction({
+        actualAuthor: author,
+        requestedAuthor: "0x00000000000000000000000000000000000000bb",
+        status: 1,
+      }),
+    ).to.throw("claim_author_unauthorized");
+    expect(() =>
+      resolveProductionClaimPublicationAction({
+        actualAuthor: author,
+        bondSatisfied: false,
+        requestedAuthor: author,
+        status: 0,
+      }),
+    ).to.throw("claim_author_bond_unsatisfied");
+    expect(
+      resolveProductionClaimPublicationAction({
+        actualAuthor: author,
+        bondSatisfied: true,
+        requestedAuthor: author,
+        status: 0,
+      }),
+    ).to.equal("publish");
+  });
   it("validates integer claim fields before chain setup", () => {
     expect(resolveIntegerInput(undefined, 1, "domainId")).to.equal(1);
     expect(resolveIntegerInput(0, 1, "domainId")).to.equal(0);
@@ -16,6 +55,97 @@ describe("production submission", () => {
       "domainId must be an integer greater than or equal to 0",
     );
   });
+
+  it("anchors the SHA-256 of bounded retrieved artifact bytes", async () => {
+    const bytes = Buffer.from("externally authored scientific artifact");
+    const digest = createHash("sha256").update(bytes).digest("hex");
+    const result = await verifyProductionClaimArtifact(
+      {
+        artifactSha256: `sha256:${digest}`,
+        artifactUri: "ipfs://bafy-claim/claim.json",
+      },
+      {
+        dnsLookup: async () => [{ address: "93.184.216.34", family: 4 }],
+        fetchImpl: async () => new Response(bytes, { status: 200 }),
+      },
+    );
+    assert.equal(result.contentDigest, `0x${digest}`);
+    assert.equal(result.sizeBytes, bytes.length);
+  });
+
+  it("fails artifact verification before chain setup on mismatch or retrieval failure", async () => {
+    const options = {
+      dnsLookup: async () => [{ address: "93.184.216.34", family: 4 }],
+      fetchImpl: async () => new Response("different bytes", { status: 200 }),
+    };
+    await assert.rejects(
+      verifyProductionClaimArtifact(
+        {
+          artifactSha256: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          artifactUri: "ar://arweave-transaction-id",
+        },
+        options,
+      ),
+      /claim artifact SHA-256 mismatch/,
+    );
+    await assert.rejects(
+      verifyProductionClaimArtifact(
+        {
+          artifactSha256: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          artifactUri: "filecoin://bafy-filecoin-cid",
+        },
+        { ...options, fetchImpl: async () => new Response("missing", { status: 404 }) },
+      ),
+      /claim artifact retrieval failed with status 404/,
+    );
+    await assert.rejects(
+      verifyProductionClaimArtifact(
+        {
+          artifactSha256: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          artifactUri: "https://mutable.example.org/artifact.json",
+        },
+        options,
+      ),
+      /must use ipfs:\/\/, ar:\/\/, or filecoin:\/\//,
+    );
+  });
+
+  for (const faultInjection of [
+    "before-create",
+    "after-create-before-checkpoint",
+    "after-artifact",
+  ] as const) {
+    it(`resumes the request-bound claim saga after ${faultInjection}`, async () => {
+      let claim: { claimId: string; txHash: string } | null = null;
+      let artifact: { artifactId: string; txHash: string } | null = null;
+      let createCalls = 0;
+      let attachCalls = 0;
+      const dependencies = {
+        findClaim: async () => claim,
+        createClaim: async () => {
+          createCalls += 1;
+          claim = { claimId: "41", txHash: "0xcreate" };
+          return claim;
+        },
+        checkpoint: async () => {},
+        findArtifact: async () => artifact,
+        attachArtifact: async () => {
+          attachCalls += 1;
+          artifact = { artifactId: "73", txHash: "0xartifact" };
+          return artifact;
+        },
+      };
+      await assert.rejects(
+        runClaimCreationSaga({ ...dependencies, faultInjection }),
+        /fault_injected/,
+      );
+      const resumed = await runClaimCreationSaga(dependencies);
+      assert.equal(resumed.claimId, "41");
+      assert.equal(resumed.artifactId, "73");
+      assert.equal(createCalls, 1);
+      assert.equal(attachCalls, 1);
+    });
+  }
 });
 
 describe("demo submission", () => {

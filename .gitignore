@@ -29,3 +29,5 @@ ops/*.addresses.json
 ops/read-model.json
 ops/ui-*.png
 types/
+subgraph/build/
+subgraph/generated/

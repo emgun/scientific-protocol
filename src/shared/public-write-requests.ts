@@ -103,7 +103,7 @@ export async function markPublicWriteRequestAccepted(
         status = 'accepted',
         outcome_detail = $2,
         updated_at = NOW()
-      WHERE request_id = $1
+      WHERE request_id = $1 AND status <> 'accepted'
     `,
     [requestId, outcomeDetail ?? null],
   );
@@ -111,6 +111,21 @@ export async function markPublicWriteRequestAccepted(
   if (!request) {
     throw new Error("public_write_request_not_found_after_accept");
   }
+  return request;
+}
+
+export async function markPublicWriteRequestPending(
+  queryable: Queryable,
+  requestId: string,
+  outcomeDetail: string,
+): Promise<PublicWriteRequestView> {
+  await queryable.query(
+    `UPDATE public_write_requests SET status = 'pending', outcome_detail = $2, updated_at = NOW()
+     WHERE request_id = $1 AND status <> 'accepted'`,
+    [requestId, outcomeDetail.slice(0, 2000)],
+  );
+  const request = await readPublicWriteRequest(queryable, requestId);
+  if (!request) throw new Error("public_write_request_not_found_after_pending_update");
   return request;
 }
 
@@ -126,7 +141,7 @@ export async function markPublicWriteRequestRejected(
         status = 'rejected',
         outcome_detail = $2,
         updated_at = NOW()
-      WHERE request_id = $1
+      WHERE request_id = $1 AND status <> 'accepted'
     `,
     [requestId, outcomeDetail.slice(0, 2000)],
   );
@@ -186,6 +201,79 @@ export async function readPublicWriteRequest(
     payload: row.payload ?? {},
     updatedAt: row.updatedAt.toISOString(),
   };
+}
+
+export async function readPublicWriteRequestByHash(
+  queryable: Queryable,
+  requestHash: string,
+): Promise<PublicWriteRequestView | undefined> {
+  const result = await queryable.query<{ requestId: string }>(
+    `SELECT request_id::text AS "requestId" FROM public_write_requests WHERE request_hash = $1`,
+    [requestHash],
+  );
+  const requestId = result.rows[0]?.requestId;
+  return requestId ? readPublicWriteRequest(queryable, requestId) : undefined;
+}
+
+export async function reservePublicWriteRequestExecution(
+  queryable: Queryable,
+  input: { leaseMs: number; leaseOwner: string; requestId: string },
+): Promise<boolean> {
+  const result = await queryable.query(
+    `UPDATE public_write_requests
+     SET execution_lease_owner = $2,
+         execution_lease_expires_at = NOW() + ($3::text || ' milliseconds')::interval,
+         updated_at = NOW()
+     WHERE request_id = $1
+       AND (execution_lease_expires_at IS NULL OR execution_lease_expires_at <= NOW())`,
+    [input.requestId, input.leaseOwner, input.leaseMs],
+  );
+  return result.rowCount === 1;
+}
+
+export async function renewPublicWriteRequestExecution(
+  queryable: Queryable,
+  input: { leaseMs: number; leaseOwner: string; requestId: string },
+): Promise<boolean> {
+  const result = await queryable.query(
+    `UPDATE public_write_requests
+     SET execution_lease_expires_at = NOW() + ($3::text || ' milliseconds')::interval,
+         updated_at = NOW()
+     WHERE request_id = $1
+       AND execution_lease_owner = $2
+       AND execution_lease_expires_at > NOW()`,
+    [input.requestId, input.leaseOwner, input.leaseMs],
+  );
+  return result.rowCount === 1;
+}
+
+export async function assertPublicWriteRequestExecution(
+  queryable: Queryable,
+  input: { leaseOwner: string; requestId: string },
+): Promise<void> {
+  const result = await queryable.query(
+    `SELECT 1
+     FROM public_write_requests
+     WHERE request_id = $1
+       AND execution_lease_owner = $2
+       AND execution_lease_expires_at > NOW()`,
+    [input.requestId, input.leaseOwner],
+  );
+  if (result.rowCount !== 1) {
+    throw new Error("public_write_request_execution_lease_lost");
+  }
+}
+
+export async function releasePublicWriteRequestExecution(
+  queryable: Queryable,
+  input: { leaseOwner: string; requestId: string },
+): Promise<void> {
+  await queryable.query(
+    `UPDATE public_write_requests
+     SET execution_lease_owner = NULL, execution_lease_expires_at = NULL, updated_at = NOW()
+     WHERE request_id = $1 AND execution_lease_owner = $2`,
+    [input.requestId, input.leaseOwner],
+  );
 }
 
 export {

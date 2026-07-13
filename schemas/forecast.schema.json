@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scientific-protocol.local/schemas/forecast.schema.json",
+  "title": "ForecastReadModel",
+  "description": "Indexed forecast state, including the effective claim decision visible at commitment and the decision used for settlement.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "forecastId",
+    "claimId",
+    "forecaster",
+    "agentId",
+    "commitmentHash",
+    "stakeAmount",
+    "committedAt",
+    "revealDeadline",
+    "revealed",
+    "settled",
+    "direction",
+    "confidenceBps",
+    "effectiveDecisionIdAtCommit",
+    "resolutionDecisionId",
+    "finalStatus",
+    "matched",
+    "payoutAmount"
+  ],
+  "properties": {
+    "forecastId": { "type": "string", "pattern": "^[0-9]+$" },
+    "claimId": { "type": "string", "pattern": "^[0-9]+$" },
+    "forecaster": { "type": "string", "pattern": "^0x[a-fA-F0-9]{40}$" },
+    "agentId": { "type": "string", "pattern": "^[0-9]+$" },
+    "commitmentHash": { "type": "string", "pattern": "^0x[a-fA-F0-9]{64}$" },
+    "stakeAmount": { "type": "string", "pattern": "^[0-9]+$" },
+    "committedAt": { "type": "integer", "minimum": 0 },
+    "revealDeadline": { "type": "integer", "minimum": 0 },
+    "revealed": { "type": "boolean" },
+    "settled": { "type": "boolean" },
+    "direction": { "type": "integer", "minimum": 0 },
+    "confidenceBps": { "type": "integer", "minimum": 0, "maximum": 10000 },
+    "effectiveDecisionIdAtCommit": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9]+$"
+    },
+    "resolutionDecisionId": { "type": ["string", "null"], "pattern": "^[0-9]+$" },
+    "finalStatus": { "type": ["integer", "null"], "minimum": 0 },
+    "matched": { "type": ["boolean", "null"] },
+    "payoutAmount": { "type": ["string", "null"], "pattern": "^[0-9]+$" }
+  }
+}

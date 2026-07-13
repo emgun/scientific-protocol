@@ -1,6 +1,6 @@
 {
   "name": "scientific-protocol",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Claim-centric protocol for scientific publication, replication, review, and reward.",
   "license": "MIT",
   "repository": {
@@ -21,6 +21,9 @@
   ],
   "main": "./dist/sdk/index.js",
   "types": "./dist/sdk/index.d.ts",
+  "bin": {
+    "scientific-protocol-service": "./dist/service/cli.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/sdk/index.d.ts",
@@ -30,15 +33,36 @@
       "types": "./dist/generated/contracts.d.ts",
       "import": "./dist/generated/contracts.js"
     },
+    "./service": {
+      "types": "./dist/service/index.d.ts",
+      "import": "./dist/service/index.js"
+    },
     "./schemas/claim": "./schemas/claim.schema.json",
     "./schemas/replication": "./schemas/replication.schema.json",
+    "./schemas/forecast": "./schemas/forecast.schema.json",
     "./schemas/evaluation": "./schemas/evaluation.schema.json",
     "./schemas/artifact-storage-attestation": "./schemas/artifact-storage-attestation.schema.json",
     "./schemas/artifact-storage-bundle": "./schemas/artifact-storage-bundle.schema.json"
   },
   "files": [
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "SECURITY.md",
     "dist",
+    "docs/claim-publication-bond-flow.md",
+    "docs/migrations/0.3.0.md",
+    "docs/read-model-reorg-recovery.md",
+    "docs/reference-service.md",
+    "docs/release.md",
+    "docs/run-your-own-gateway.md",
+    "docs/subgraph.md",
+    "examples/external-agent",
+    "ops/migrations",
     "schemas",
+    "subgraph/abis",
+    "subgraph/schema.graphql",
+    "subgraph/src",
+    "subgraph/subgraph.yaml",
     "README.md"
   ],
   "type": "module",
@@ -51,7 +75,8 @@
   },
   "scripts": {
     "build": "bash script/run-with-node22-env.sh hardhat clean && bash script/run-with-node22-env.sh hardhat compile && npm run generate:contracts",
-    "build:package": "npm run build && bash script/run-with-node22-env.sh tsc -p tsconfig.package.json",
+    "build:package": "npm run build && bash script/run-with-node22-env.sh tsc -p tsconfig.package.json && npm run build:service",
+    "build:service": "bash script/run-with-node22-env.sh tsc -p tsconfig.service.json",
     "prepack": "npm run build:package",
     "lint": "npm run lint:biome && npm run lint:prettier && npm run lint:shell",
     "lint:biome": "bash script/run-with-node22-env.sh npx biome check --diagnostic-level=error --files-ignore-unknown=true src test script hardhat.config.ts package.json tsconfig.json biome.json .prettierrc.json",
@@ -70,27 +95,46 @@
     "node:env:init": "bash script/init-node22-env.sh",
     "deploy": "bash script/run-with-node22-env.sh hardhat run --network localhost script/deploy-protocol.ts",
     "gas:snapshot": "forge snapshot --snap .gas-snapshot",
-    "gas:check": "forge snapshot --check .gas-snapshot"
+    "gas:check": "forge snapshot --check .gas-snapshot",
+    "service:dev": "bash script/run-with-node22-env.sh node --import tsx src/service/cli.ts",
+    "service:gateway": "npm run service:dev -- gateway",
+    "service:migrate": "npm run service:dev -- migrate",
+    "service:sync": "npm run service:dev -- sync",
+    "indexer:rebuild:fresh": "bash script/run-with-node22-env.sh node --import tsx script/rebuild-read-model-fresh.ts",
+    "subgraph:prepare": "npm run build && bash script/run-with-node22-env.sh node --import tsx script/generate-subgraph-assets.ts",
+    "subgraph:codegen": "npm run subgraph:prepare && cd subgraph && graph codegen subgraph.yaml",
+    "subgraph:build": "npm run subgraph:codegen && cd subgraph && graph build subgraph.yaml",
+    "subgraph:test": "npm run subgraph:build && bash script/run-with-node22-env.sh node --import tsx script/validate-subgraph.ts"
   },
-  "devDependencies": {
+  "dependencies": {
     "@aws-sdk/client-s3": "^3.1011.0",
-    "@biomejs/biome": "^2.4.9",
     "@filoz/synapse-sdk": "^1.0.1",
     "@google-cloud/storage": "^7.19.0",
+    "ethers": "^6.13.2",
+    "pdf-parse": "^2.4.5",
+    "pg": "^8.13.1",
+    "undici": "^6.24.0",
+    "viem": "^2.54.6"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.9",
+    "@graphprotocol/graph-cli": "^0.98.1",
+    "@graphprotocol/graph-ts": "^0.38.2",
     "@nomicfoundation/hardhat-ethers": "^4.0.0",
     "@nomicfoundation/hardhat-node-test-runner": "^3.0.11",
     "@openzeppelin/contracts": "^5.4.0",
     "@types/pg": "^8.11.10",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
     "chai": "^5.1.1",
     "hardhat": "^3.1.12",
-    "pdf-parse": "^2.4.5",
-    "pg": "^8.13.1",
+    "matchstick-as": "^0.6.0",
     "prettier": "^3.8.1",
     "prettier-plugin-solidity": "^2.3.1",
     "ts-node": "^10.9.2",
     "tsx": "^4.19.4",
     "typescript": "^5.5.4",
-    "viem": "^2.54.6"
+    "yaml": "^2.8.1"
   },
   "overrides": {
     "@tootallnate/once": "3.0.1",
@@ -98,9 +142,7 @@
     "@aws-sdk/xml-builder": "3.972.22",
     "fast-xml-parser": "5.8.0",
     "undici": "^6.24.0",
+    "uuid": "11.1.1",
     "ws": "8.21.0"
-  },
-  "dependencies": {
-    "ethers": "^6.13.2"
   }
 }

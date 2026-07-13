@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readEnvValue } from "./secrets.js";
@@ -9,7 +9,16 @@ export function isMainModule(moduleUrl: string, argv: string[] = process.argv): 
     return false;
   }
 
-  return fileURLToPath(moduleUrl) === path.resolve(entryPath);
+  const modulePath = fileURLToPath(moduleUrl);
+  const resolvedEntryPath = path.resolve(entryPath);
+  if (modulePath === resolvedEntryPath) {
+    return true;
+  }
+  try {
+    return realpathSync(modulePath) === realpathSync(resolvedEntryPath);
+  } catch {
+    return false;
+  }
 }
 
 export function isCliEntrypoint(moduleUrl: string, argv: string[] = process.argv): boolean {

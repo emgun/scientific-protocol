@@ -147,6 +147,11 @@ export async function resolveReplicationJob(
   options: ResolveJobOptions,
 ): Promise<ResolutionRunView> {
   const env = options.env ?? process.env;
+  if (env.SP_REFERENCE_CANARY_MODE !== "true") {
+    throw new Error(
+      "reference resolver is disabled; set SP_REFERENCE_CANARY_MODE=true only for an explicit non-authoritative canary",
+    );
+  }
   const pool = await prepareResolverStore(options.connectionString ?? getDatabaseUrl(env));
   let signer: NonceManager | undefined;
   try {
@@ -291,11 +296,10 @@ export async function resolveReplicationJob(
         resolverType: proposedResolution.resolverType,
       });
       const txHashes: string[] = [];
-      let currentClaimStatus = Number(claimRecord.status);
-      currentClaimStatus = await maybeMoveClaimIntoReplication(
+      await maybeMoveClaimIntoReplication(
         claimRegistry,
         claimIdBigInt,
-        currentClaimStatus,
+        Number(claimRecord.status),
         txHashes,
       );
 
@@ -312,16 +316,11 @@ export async function resolveReplicationJob(
       );
       txHashes.push((await resolutionTx.wait()).hash);
 
-      if (
-        proposedResolution.claimStatus !== null &&
-        proposedResolution.claimStatus !== currentClaimStatus
-      ) {
-        const claimStatusTx = await claimRegistry.setClaimStatus(
-          claimIdBigInt,
-          proposedResolution.claimStatus,
-        );
-        txHashes.push((await claimStatusTx.wait()).hash);
-      }
+      const decisionTx = await claimRegistry.finalizeClaimResolution(
+        claimIdBigInt,
+        replicationIdBigInt,
+      );
+      txHashes.push((await decisionTx.wait()).hash);
 
       await pool.query(
         `

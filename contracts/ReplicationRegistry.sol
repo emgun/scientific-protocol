@@ -9,11 +9,14 @@ import {IAgentRegistry} from "./interfaces/IAgentRegistry.sol";
 import {IReplicationRegistry} from "./interfaces/IReplicationRegistry.sol";
 import {IResolutionModule} from "./interfaces/IResolutionModule.sol";
 
+/// @title ReplicationRegistry
+/// @notice Append-only replication submissions and role-gated, module-validated outcomes.
 contract ReplicationRegistry is AccessManaged, IReplicationRegistry {
     error ReplicationRegistryUnknownClaim(uint256 claimId);
     error ReplicationRegistryUnknownReplication(uint256 replicationId);
     error ReplicationRegistryUnauthorizedAgent(uint256 agentId, address actor);
     error ReplicationRegistryAlreadyResolved(uint256 replicationId);
+    error ReplicationRegistryModuleRejected(address module, uint256 replicationId);
 
     event ReplicationSubmitted(
         uint256 indexed replicationId,
@@ -106,7 +109,14 @@ contract ReplicationRegistry is AccessManaged, IReplicationRegistry {
         }
 
         address module = claimRegistry.getClaimResolutionModule(replication.claimId);
-        IResolutionModule(module).validateResolution(replication.claimId, replicationId, result);
+        bool accepted = IResolutionModule(module).validateResolution(
+            replication.claimId,
+            replicationId,
+            result
+        );
+        if (!accepted) {
+            revert ReplicationRegistryModuleRejected(module, replicationId);
+        }
 
         ProtocolTypes.ReplicationOutcome outcome = _mapResolutionStatus(result.status);
 
@@ -135,7 +145,7 @@ contract ReplicationRegistry is AccessManaged, IReplicationRegistry {
 
     function getReplication(
         uint256 replicationId
-    ) external view returns (ProtocolTypes.ReplicationRecord memory) {
+    ) external view override returns (ProtocolTypes.ReplicationRecord memory) {
         ProtocolTypes.ReplicationRecord memory replication = _replications[replicationId];
         if (replication.replicationId == 0) {
             revert ReplicationRegistryUnknownReplication(replicationId);
@@ -153,6 +163,16 @@ contract ReplicationRegistry is AccessManaged, IReplicationRegistry {
 
     function getReplicationClaimId(uint256 replicationId) external view override returns (uint256) {
         return _replications[replicationId].claimId;
+    }
+
+    function getReplicationReplicator(
+        uint256 replicationId
+    ) external view override returns (address) {
+        return _replications[replicationId].replicator;
+    }
+
+    function isReplicationResolved(uint256 replicationId) external view override returns (bool) {
+        return _replications[replicationId].resolvedAt != 0;
     }
 
     function _mapResolutionStatus(

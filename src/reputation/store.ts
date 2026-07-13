@@ -27,6 +27,7 @@ export type ReputationPayloadView = {
   entryCount: number;
   payloadHash: string;
   payloadId: string;
+  policyVersion: string;
 };
 
 export type PageResult<T> = {
@@ -52,6 +53,7 @@ export async function insertReputationPayload(
     domainId: number;
     entryCount: number;
     payloadHash: string;
+    policyVersion: string;
   },
 ): Promise<ReputationPayloadView> {
   const result = await client.query<{ payload_id: string }>(
@@ -62,8 +64,9 @@ export async function insertReputationPayload(
         cursor_block,
         payload_hash,
         artifact_key,
-        entry_count
-      ) VALUES ($1, $2, $3, $4, $5, $6)
+        entry_count,
+        policy_version
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
       RETURNING payload_id
     `,
     [
@@ -73,6 +76,7 @@ export async function insertReputationPayload(
       input.payloadHash,
       input.artifactKey,
       input.entryCount,
+      input.policyVersion,
     ],
   );
   const payloadId = result.rows[0]?.payload_id;
@@ -210,6 +214,7 @@ async function queryReputationPayloads(
     entryCount: number;
     payloadHash: string;
     payloadId: string;
+    policyVersion: string;
   }>(
     `
       SELECT
@@ -220,6 +225,7 @@ async function queryReputationPayloads(
         payload_hash AS "payloadHash",
         artifact_key AS "artifactKey",
         entry_count AS "entryCount",
+        policy_version AS "policyVersion",
         created_at AS "createdAt"
       FROM reputation_payloads
       ${whereClause}

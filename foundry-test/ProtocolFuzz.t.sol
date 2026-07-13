@@ -35,21 +35,15 @@ contract ProtocolFuzzTest is ProtocolDeployer {
         uint8 invalidTargetRaw
     ) public {
         uint256 claimId = createPublishedClaim(uint64(DOMAIN_COMPUTATIONAL), 1 ether);
-        ProtocolTypes.ClaimStatus[] memory reachable = new ProtocolTypes.ClaimStatus[](3);
+        ProtocolTypes.ClaimStatus[] memory reachable = new ProtocolTypes.ClaimStatus[](2);
         reachable[0] = ProtocolTypes.ClaimStatus.Published;
         reachable[1] = ProtocolTypes.ClaimStatus.UnderReplication;
-        reachable[2] = ProtocolTypes.ClaimStatus.ProvisionallySupported;
         ProtocolTypes.ClaimStatus fromStatus = reachable[fromChoice % reachable.length];
         ProtocolTypes.ClaimStatus invalidTarget = ProtocolTypes.ClaimStatus(invalidTargetRaw % 8);
 
         if (fromStatus == ProtocolTypes.ClaimStatus.UnderReplication) {
             vm.prank(admin);
             claimRegistry.setClaimStatus(claimId, ProtocolTypes.ClaimStatus.UnderReplication);
-        } else if (fromStatus == ProtocolTypes.ClaimStatus.ProvisionallySupported) {
-            vm.startPrank(admin);
-            claimRegistry.setClaimStatus(claimId, ProtocolTypes.ClaimStatus.UnderReplication);
-            claimRegistry.setClaimStatus(claimId, ProtocolTypes.ClaimStatus.ProvisionallySupported);
-            vm.stopPrank();
         }
 
         vm.assume(!_isAllowedTransition(fromStatus, invalidTarget));
@@ -88,7 +82,7 @@ contract ProtocolFuzzTest is ProtocolDeployer {
 
         uint256 firstReservation = bound(uint256(firstRaw), 1, funded);
         vm.prank(admin);
-        bondEscrow.reserveBountyPayout(claimId, replicationIdOne, replicator, firstReservation);
+        bondEscrow.reserveBountyPayout(claimId, replicationIdOne, firstReservation);
 
         uint256 availableAfterFirst = funded - firstReservation;
         uint256 secondReservation = bound(uint256(secondRaw), 1, funded);
@@ -96,20 +90,10 @@ contract ProtocolFuzzTest is ProtocolDeployer {
         if (secondReservation > availableAfterFirst) {
             vm.prank(admin);
             vm.expectRevert();
-            bondEscrow.reserveBountyPayout(
-                claimId,
-                replicationIdTwo,
-                replicator,
-                secondReservation
-            );
+            bondEscrow.reserveBountyPayout(claimId, replicationIdTwo, secondReservation);
         } else {
             vm.prank(admin);
-            bondEscrow.reserveBountyPayout(
-                claimId,
-                replicationIdTwo,
-                replicator,
-                secondReservation
-            );
+            bondEscrow.reserveBountyPayout(claimId, replicationIdTwo, secondReservation);
             assertLe(
                 bondEscrow.reservedBountyBalances(claimId),
                 bondEscrow.bountyBalances(claimId)
@@ -122,42 +106,15 @@ contract ProtocolFuzzTest is ProtocolDeployer {
         uint8 choice
     ) internal pure returns (ProtocolTypes.ClaimStatus) {
         if (currentStatus == ProtocolTypes.ClaimStatus.Published) {
-            ProtocolTypes.ClaimStatus[3] memory options = [
+            ProtocolTypes.ClaimStatus[2] memory options = [
                 ProtocolTypes.ClaimStatus.UnderReplication,
-                ProtocolTypes.ClaimStatus.Qualified,
                 ProtocolTypes.ClaimStatus.Deprecated
             ];
             return options[choice % options.length];
         }
 
         if (currentStatus == ProtocolTypes.ClaimStatus.UnderReplication) {
-            ProtocolTypes.ClaimStatus[5] memory options = [
-                ProtocolTypes.ClaimStatus.ProvisionallySupported,
-                ProtocolTypes.ClaimStatus.Qualified,
-                ProtocolTypes.ClaimStatus.Refuted,
-                ProtocolTypes.ClaimStatus.Fraudulent,
-                ProtocolTypes.ClaimStatus.Deprecated
-            ];
-            return options[choice % options.length];
-        }
-
-        if (currentStatus == ProtocolTypes.ClaimStatus.ProvisionallySupported) {
-            ProtocolTypes.ClaimStatus[4] memory options = [
-                ProtocolTypes.ClaimStatus.Qualified,
-                ProtocolTypes.ClaimStatus.Refuted,
-                ProtocolTypes.ClaimStatus.Fraudulent,
-                ProtocolTypes.ClaimStatus.Deprecated
-            ];
-            return options[choice % options.length];
-        }
-
-        if (currentStatus == ProtocolTypes.ClaimStatus.Qualified) {
-            ProtocolTypes.ClaimStatus[3] memory options = [
-                ProtocolTypes.ClaimStatus.Refuted,
-                ProtocolTypes.ClaimStatus.Fraudulent,
-                ProtocolTypes.ClaimStatus.Deprecated
-            ];
-            return options[choice % options.length];
+            return ProtocolTypes.ClaimStatus.Deprecated;
         }
 
         return ProtocolTypes.ClaimStatus.Deprecated;
@@ -175,29 +132,16 @@ contract ProtocolFuzzTest is ProtocolDeployer {
         if (from == ProtocolTypes.ClaimStatus.Published) {
             return
                 to == ProtocolTypes.ClaimStatus.UnderReplication ||
-                to == ProtocolTypes.ClaimStatus.Qualified ||
                 to == ProtocolTypes.ClaimStatus.Deprecated;
         }
         if (from == ProtocolTypes.ClaimStatus.UnderReplication) {
-            return
-                to == ProtocolTypes.ClaimStatus.ProvisionallySupported ||
-                to == ProtocolTypes.ClaimStatus.Qualified ||
-                to == ProtocolTypes.ClaimStatus.Refuted ||
-                to == ProtocolTypes.ClaimStatus.Fraudulent ||
-                to == ProtocolTypes.ClaimStatus.Deprecated;
+            return to == ProtocolTypes.ClaimStatus.Deprecated;
         }
         if (from == ProtocolTypes.ClaimStatus.ProvisionallySupported) {
-            return
-                to == ProtocolTypes.ClaimStatus.Qualified ||
-                to == ProtocolTypes.ClaimStatus.Refuted ||
-                to == ProtocolTypes.ClaimStatus.Fraudulent ||
-                to == ProtocolTypes.ClaimStatus.Deprecated;
+            return to == ProtocolTypes.ClaimStatus.Deprecated;
         }
         if (from == ProtocolTypes.ClaimStatus.Qualified) {
-            return
-                to == ProtocolTypes.ClaimStatus.Refuted ||
-                to == ProtocolTypes.ClaimStatus.Fraudulent ||
-                to == ProtocolTypes.ClaimStatus.Deprecated;
+            return to == ProtocolTypes.ClaimStatus.Deprecated;
         }
         if (
             from == ProtocolTypes.ClaimStatus.Refuted ||

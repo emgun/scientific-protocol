@@ -1,12 +1,30 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { expect } from "chai";
+import { consumeConfiguredRateLimit } from "../src/api/rate-limit.js";
 import type { ArtifactDraftInput, ArtifactIngestionResult } from "../src/artifacts/ingestion.js";
 import { upsertPersistedArtifact } from "../src/coordinator/store.js";
+import {
+  applyForecastSettlement,
+  migrateReadModelDb,
+  readForecast,
+  upsertForecast,
+} from "../src/indexer/store.js";
+import {
+  assertPublicWriteRequestExecution,
+  insertPublicWriteRequest,
+  markPublicWriteRequestAccepted,
+  markPublicWriteRequestPending,
+  markPublicWriteRequestRejected,
+  readPublicWriteRequest,
+  releasePublicWriteRequestExecution,
+  renewPublicWriteRequestExecution,
+  reservePublicWriteRequestExecution,
+} from "../src/shared/public-write-requests.js";
 import {
   attemptSourceAutoPublication,
   type SourceAutoPublicationDependencies,
@@ -24,8 +42,10 @@ import { ingestSource } from "../src/sources/service.js";
 import {
   insertSourceExtractionCandidate,
   prepareSourceStore,
+  readSourceIngestionAttempt,
   readSourcePublicationAttempt,
   readSourceSubmissionRecordsPage,
+  reserveSourceIngestionAttempt,
   upsertSourceRecord,
 } from "../src/sources/store.js";
 import type { SourceExtractionCandidate } from "../src/sources/types.js";
@@ -152,7 +172,15 @@ describe("source ingress", { skip: database.skipReason }, () => {
 
     try {
       await assert.rejects(
-        confirmSourcePublication(pool, input, env, { createClaim, syncClaimReadModel }),
+        confirmSourcePublication(pool, input, env, {
+          createClaim,
+          publishClaim: async (claimId) => ({
+            claimId,
+            publicationStatus: "published",
+            publishClaimTxHash: "0xmanualpublishresume",
+          }),
+          syncClaimReadModel,
+        }),
         /simulated manual indexer outage/,
       );
       await pool.query(
@@ -167,6 +195,11 @@ describe("source ingress", { skip: database.skipReason }, () => {
 
       const resumed = await confirmSourcePublication(pool, input, env, {
         createClaim,
+        publishClaim: async (claimId) => ({
+          claimId,
+          publicationStatus: "published",
+          publishClaimTxHash: "0xmanualpublishresume",
+        }),
         syncClaimReadModel,
       });
       expect(resumed.publishedClaimId).to.equal(testClaimId);
@@ -179,7 +212,7 @@ describe("source ingress", { skip: database.skipReason }, () => {
     }
   });
 
-  it("resumes a claim-ready publication without creating a duplicate claim", async () => {
+  it("keeps auto-publication paused when a claim-ready draft needs an author signature", async () => {
     const pool = await prepareSourceStore();
     const artifactRoot = await mkdtemp(path.join(os.tmpdir(), "sp-source-publication-"));
     const source = await upsertSourceRecord(pool, {
@@ -283,11 +316,12 @@ describe("source ingress", { skip: database.skipReason }, () => {
         createClaim,
         syncClaimReadModel,
       });
-      expect(resumed.publishedClaimId).to.equal(testClaimId);
-      expect(resumed.source?.status).to.equal("published");
+      expect(resumed.publishedClaimId).to.equal(null);
+      expect(resumed.reason).to.equal("awaiting_author_bond");
+      expect(resumed.source?.status).to.equal("ready_for_publication");
       expect(createCalls).to.equal(1);
       expect((await readSourcePublicationAttempt(pool, source.sourceId))?.status).to.equal(
-        "completed",
+        "claim_ready",
       );
     } finally {
       await pool.query("DELETE FROM claims WHERE claim_id = $1", [testClaimId]);
@@ -686,7 +720,7 @@ describe("source ingress", { skip: database.skipReason }, () => {
     }
   });
 
-  it("serializes concurrent duplicate submissions under a source lock", async () => {
+  it("leases concurrent submissions so only one performs ingestion", async () => {
     const pool = await prepareSourceStore();
     const artifactRoot = await mkdtemp(path.join(os.tmpdir(), "sp-source-ingress-lock-"));
     const sourcePath = path.join(artifactRoot, "paper.txt");
@@ -737,9 +771,10 @@ describe("source ingress", { skip: database.skipReason }, () => {
       });
 
       const deadline = Date.now() + 5_000;
-      while (ingestCalls === 0 && Date.now() < deadline) {
+      while (ingestCalls < 1 && Date.now() < deadline) {
         await new Promise<void>((resolve) => setTimeout(resolve, 10));
       }
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
       expect(ingestCalls).to.equal(1);
 
       releaseFirstIngest?.();
@@ -748,8 +783,10 @@ describe("source ingress", { skip: database.skipReason }, () => {
       expect(ingestCalls).to.equal(1);
       expect(taskCalls).to.equal(1);
       expect(first.source.sourceId).to.equal(second.source.sourceId);
-      expect(first.submissionOutcome).to.equal("created");
-      expect(second.submissionOutcome).to.equal("duplicate");
+      expect([first.submissionOutcome, second.submissionOutcome].sort()).to.deep.equal([
+        "created",
+        "duplicate",
+      ]);
 
       const submissions = await readSourceSubmissionRecordsPage(pool, {
         limit: 10,
@@ -762,6 +799,431 @@ describe("source ingress", { skip: database.skipReason }, () => {
       releaseFirstIngest?.();
       await pool.end();
       await rm(artifactRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("reconstructs an exact request-hash replay without appending another submission", async () => {
+    const pool = await prepareSourceStore();
+    const sourceUrl = `https://example.com/exact-replay-${randomUUID()}.txt`;
+    const requestHash = `0x${createHash("sha256").update(sourceUrl).digest("hex")}`;
+    let ingestCalls = 0;
+    const options = {
+      artifactIngestor: async () => {
+        ingestCalls += 1;
+        return makeStubIngestionResult(sourceUrl);
+      },
+      discoveryMode: "user_submitted" as const,
+      openSourceExtractionTasks: async () => undefined,
+      requestHash,
+      submittedByActor: "0x0000000000000000000000000000000000000001",
+    };
+    try {
+      const first = await ingestSource(pool, { sourceType: "url", sourceUrl }, options);
+      const replay = await ingestSource(pool, { sourceType: "url", sourceUrl }, options);
+      expect(replay.source.sourceId).to.equal(first.source.sourceId);
+      expect(replay.submission.submissionId).to.equal(first.submission.submissionId);
+      expect(replay.submission.requestHash).to.equal(requestHash);
+      expect(ingestCalls).to.equal(1);
+      const submissions = await readSourceSubmissionRecordsPage(pool, {
+        limit: 10,
+        sourceId: first.source.sourceId,
+      });
+      expect(submissions.items).to.have.length(1);
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it("recovers a source ingestion attempt after an abandoned lease expires", async () => {
+    const pool = await prepareSourceStore();
+    const sourcePath = `https://example.com/abandoned-source-${randomUUID()}.txt`;
+    const canonical = canonicalizeSourceLocator({
+      locator: sourcePath,
+      ref: null,
+      sourceType: "url",
+    });
+    try {
+      const abandoned = await reserveSourceIngestionAttempt(pool, {
+        canonicalSourceKey: canonical.canonicalSourceKey,
+        leaseMs: 20,
+        leaseOwner: "dead-worker",
+        normalizedLocator: canonical.normalizedLocator,
+        rawLocator: sourcePath,
+        sourceType: "url",
+      });
+      expect(abandoned.acquired).to.equal(true);
+
+      let ingestCalls = 0;
+      const result = await ingestSource(
+        pool,
+        { sourceType: "url", sourceUrl: sourcePath },
+        {
+          artifactIngestor: async () => {
+            ingestCalls += 1;
+            return makeStubIngestionResult(sourcePath);
+          },
+          ingestionLeaseMs: 1_000,
+          ingestionWaitMs: 100,
+          ingestionWaitPollMs: 5,
+          leaseOwner: "recovery-worker",
+          openSourceExtractionTasks: async () => {},
+        },
+      );
+
+      expect(result.submissionOutcome).to.equal("created");
+      expect(ingestCalls).to.equal(1);
+      const attempt = await readSourceIngestionAttempt(pool, canonical.canonicalSourceKey);
+      expect(attempt?.status).to.equal("completed");
+      expect(attempt?.attemptCount).to.equal(2);
+      expect(attempt?.sourceId).to.equal(result.source.sourceId);
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it("serializes migrations and rejects changed applied migration bytes", async () => {
+    const pool = await prepareSourceStore();
+    const migrationsPath = await mkdtemp(path.join(os.tmpdir(), "sp-migration-checksum-"));
+    const migrationFile = path.join(migrationsPath, "999_checksum_probe.sql");
+    try {
+      await writeFile(
+        migrationFile,
+        "CREATE TABLE IF NOT EXISTS migration_checksum_probe (id INTEGER PRIMARY KEY);\n",
+      );
+      await Promise.all([
+        migrateReadModelDb(pool, migrationsPath),
+        migrateReadModelDb(pool, migrationsPath),
+      ]);
+      const applied = await pool.query<{ checksum: string | null }>(
+        "SELECT checksum FROM schema_migrations WHERE version = '999_checksum_probe.sql'",
+      );
+      expect(applied.rows[0]?.checksum).to.match(/^[0-9a-f]{64}$/);
+
+      await writeFile(
+        migrationFile,
+        "CREATE TABLE IF NOT EXISTS migration_checksum_probe (id INTEGER PRIMARY KEY);\n-- changed\n",
+      );
+      await assert.rejects(
+        migrateReadModelDb(pool, migrationsPath),
+        /migration checksum mismatch: 999_checksum_probe.sql/,
+      );
+    } finally {
+      await pool.query("DROP TABLE IF EXISTS migration_checksum_probe");
+      await pool.query("DELETE FROM schema_migrations WHERE version = '999_checksum_probe.sql'");
+      await pool.end();
+      await rm(migrationsPath, { force: true, recursive: true });
+    }
+  });
+
+  it("installs and reads both forecast decision linkages", async () => {
+    const pool = await prepareSourceStore();
+    try {
+      const tables = await pool.query<{ tableName: string }>(
+        `SELECT table_name AS "tableName" FROM information_schema.tables
+         WHERE table_schema = 'public' AND table_name = 'resolution_decisions'`,
+      );
+      expect(tables.rows.map((row) => row.tableName)).to.deep.equal(["resolution_decisions"]);
+      const columns = await pool.query<{ columnName: string }>(
+        `SELECT column_name AS "columnName" FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'forecasts'
+           AND column_name IN ('effective_decision_id_at_commit', 'resolution_decision_id')
+         ORDER BY column_name`,
+      );
+      expect(columns.rows.map((row) => row.columnName)).to.deep.equal([
+        "effective_decision_id_at_commit",
+        "resolution_decision_id",
+      ]);
+
+      await pool.query(
+        `INSERT INTO claims (
+           claim_id, author, domain_id, metadata_hash, resolution_module, status, created_at_block
+         ) VALUES ('900', $1, 1, $2, $1, 1, 1)`,
+        [`0x${"11".repeat(20)}`, `0x${"22".repeat(32)}`],
+      );
+      await pool.query(
+        `INSERT INTO replications (
+           replication_id, claim_id, replicator, agent_id, result_hash
+         ) VALUES
+           ('901', '900', $1, '0', $2),
+           ('902', '900', $1, '0', $3)`,
+        [`0x${"33".repeat(20)}`, `0x${"44".repeat(32)}`, `0x${"55".repeat(32)}`],
+      );
+      await pool.query(
+        `INSERT INTO resolution_decisions (
+           decision_id, claim_id, replication_id, resolution_module, status, claim_status,
+           confidence_bps, resolution_hash, evidence_hash, resolver_type, created_at, actor,
+           effective
+         ) VALUES
+           ('903', '900', '901', $1, 1, 1, 8000, $2, $3, 1, 1, $1, TRUE),
+           ('904', '900', '902', $1, 2, 2, 9000, $4, $5, 1, 2, $1, FALSE)`,
+        [
+          `0x${"66".repeat(20)}`,
+          `0x${"77".repeat(32)}`,
+          `0x${"88".repeat(32)}`,
+          `0x${"99".repeat(32)}`,
+          `0x${"aa".repeat(32)}`,
+        ],
+      );
+      const client = await pool.connect();
+      try {
+        await upsertForecast(client, {
+          forecastId: "905",
+          claimId: "900",
+          forecaster: `0x${"bb".repeat(20)}`,
+          agentId: "0",
+          commitmentHash: `0x${"cc".repeat(32)}`,
+          stakeAmount: "100",
+          committedAt: 1,
+          revealDeadline: 2,
+          revealed: true,
+          settled: true,
+          direction: 1,
+          confidenceBps: 7500,
+          effectiveDecisionIdAtCommit: "903",
+          resolutionDecisionId: "904",
+          finalStatus: 2,
+          matched: true,
+          payoutAmount: "125",
+        });
+      } finally {
+        client.release();
+      }
+      expect(await readForecast(pool, "905")).to.include({
+        effectiveDecisionIdAtCommit: "903",
+        resolutionDecisionId: "904",
+      });
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it("stores terminal forecast settlements without a resolution-decision foreign key", async () => {
+    const pool = await prepareSourceStore();
+    const idBase = 1_000_000_000 + (Number.parseInt(randomUUID().slice(0, 8), 16) % 800_000_000);
+    const claimId = String(idBase);
+    const forecastBase = BigInt(idBase + 1);
+    const forecastIds = {
+      forfeited: (forecastBase + 1n).toString(),
+      reclaimed: (forecastBase + 2n).toString(),
+      resolved: (forecastBase + 3n).toString(),
+    };
+    const replicationId = (forecastBase + 4n).toString();
+    const decisionId = (forecastBase + 5n).toString();
+    const author = `0x${"d1".repeat(20)}`;
+    const resolutionModule = `0x${"d2".repeat(20)}`;
+
+    try {
+      await pool.query(
+        `INSERT INTO claims (
+           claim_id, author, domain_id, metadata_hash, resolution_module, status, created_at_block
+         ) VALUES ($1, $2, 1, $3, $4, 1, 1)`,
+        [claimId, author, `0x${"d3".repeat(32)}`, resolutionModule],
+      );
+      await pool.query(
+        `INSERT INTO replications (
+           replication_id, claim_id, replicator, agent_id, result_hash
+         ) VALUES ($1, $2, $3, '0', $4)`,
+        [replicationId, claimId, author, `0x${"d4".repeat(32)}`],
+      );
+      await pool.query(
+        `INSERT INTO resolution_decisions (
+           decision_id, claim_id, replication_id, resolution_module, status, claim_status,
+           confidence_bps, resolution_hash, evidence_hash, resolver_type, created_at, actor,
+           effective
+         ) VALUES ($1, $2, $3, $4, 1, 1, 8000, $5, $6, 1, 2, $7, TRUE)`,
+        [
+          decisionId,
+          claimId,
+          replicationId,
+          resolutionModule,
+          `0x${"d5".repeat(32)}`,
+          `0x${"d6".repeat(32)}`,
+          author,
+        ],
+      );
+
+      const client = await pool.connect();
+      try {
+        for (const forecastId of Object.values(forecastIds)) {
+          await upsertForecast(client, {
+            forecastId,
+            claimId,
+            forecaster: author,
+            agentId: "0",
+            commitmentHash: `0x${"d7".repeat(32)}`,
+            stakeAmount: "100",
+            committedAt: 1,
+            revealDeadline: 2,
+            revealed: forecastId !== forecastIds.forfeited,
+            settled: false,
+            direction: 1,
+            confidenceBps: 7500,
+            effectiveDecisionIdAtCommit: null,
+            resolutionDecisionId: null,
+            finalStatus: null,
+            matched: null,
+            payoutAmount: null,
+          });
+        }
+
+        // Permissionless forfeit emits the onchain zero sentinel.
+        await applyForecastSettlement(client, forecastIds.forfeited, "0", 0, false, "0");
+        // Reclaim is normalized by the projector before it reaches storage.
+        await applyForecastSettlement(client, forecastIds.reclaimed, null, 0, false, "100");
+        // Decision-backed settlement must preserve its foreign-key linkage.
+        await applyForecastSettlement(client, forecastIds.resolved, decisionId, 1, true, "125");
+      } finally {
+        client.release();
+      }
+
+      expect(await readForecast(pool, forecastIds.forfeited)).to.include({
+        settled: true,
+        resolutionDecisionId: null,
+        finalStatus: 0,
+        matched: false,
+        payoutAmount: "0",
+      });
+      expect(await readForecast(pool, forecastIds.reclaimed)).to.include({
+        settled: true,
+        resolutionDecisionId: null,
+        finalStatus: 0,
+        matched: false,
+        payoutAmount: "100",
+      });
+      expect(await readForecast(pool, forecastIds.resolved)).to.include({
+        settled: true,
+        resolutionDecisionId: decisionId,
+        finalStatus: 1,
+        matched: true,
+        payoutAmount: "125",
+      });
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it("serializes exact public-write replays with an expiring short DB lease", async () => {
+    const pool = await prepareSourceStore();
+    try {
+      const request = await insertPublicWriteRequest(pool, {
+        actionType: "claim_create",
+        actorAddress: "0x00000000000000000000000000000000000000aa",
+        chainId: 31337,
+        payload: { statement: "lease test" },
+        requestHash: `0x${randomUUID().replaceAll("-", "").padEnd(64, "0")}`,
+        requestNonce: randomUUID(),
+        scopeKey: "submit:lease-test",
+        signature: "0xsigned",
+        status: "pending",
+      });
+      const [first, concurrent] = await Promise.all([
+        reservePublicWriteRequestExecution(pool, {
+          leaseMs: 100,
+          leaseOwner: "worker-a",
+          requestId: request.requestId,
+        }),
+        reservePublicWriteRequestExecution(pool, {
+          leaseMs: 100,
+          leaseOwner: "worker-b",
+          requestId: request.requestId,
+        }),
+      ]);
+      expect([first, concurrent].filter(Boolean)).to.have.length(1);
+      const winner = first ? "worker-a" : "worker-b";
+      expect(
+        await renewPublicWriteRequestExecution(pool, {
+          leaseMs: 100,
+          leaseOwner: winner,
+          requestId: request.requestId,
+        }),
+      ).to.equal(true);
+      await assertPublicWriteRequestExecution(pool, {
+        leaseOwner: winner,
+        requestId: request.requestId,
+      });
+      await releasePublicWriteRequestExecution(pool, {
+        leaseOwner: winner,
+        requestId: request.requestId,
+      });
+      expect(
+        await reservePublicWriteRequestExecution(pool, {
+          leaseMs: 5,
+          leaseOwner: "crashed-worker",
+          requestId: request.requestId,
+        }),
+      ).to.equal(true);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(
+        await reservePublicWriteRequestExecution(pool, {
+          leaseMs: 100,
+          leaseOwner: "recovery-worker",
+          requestId: request.requestId,
+        }),
+      ).to.equal(true);
+      await assert.rejects(
+        assertPublicWriteRequestExecution(pool, {
+          leaseOwner: "crashed-worker",
+          requestId: request.requestId,
+        }),
+        /public_write_request_execution_lease_lost/,
+      );
+      expect(
+        await renewPublicWriteRequestExecution(pool, {
+          leaseMs: 100,
+          leaseOwner: "crashed-worker",
+          requestId: request.requestId,
+        }),
+      ).to.equal(false);
+      await markPublicWriteRequestAccepted(pool, request.requestId, "claim:7:published");
+      await markPublicWriteRequestAccepted(pool, request.requestId, "claim:999:must-not-overwrite");
+      await markPublicWriteRequestPending(pool, request.requestId, "late_worker_pending");
+      await markPublicWriteRequestRejected(pool, request.requestId, "late_worker_rejected");
+      const accepted = await readPublicWriteRequest(pool, request.requestId);
+      expect(accepted?.status).to.equal("accepted");
+      expect(accepted?.outcomeDetail).to.equal("claim:7:published");
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it("atomically enforces a write limit across service instances", async () => {
+    const pool = await prepareSourceStore();
+    const bucketKey = `cross-instance:${randomUUID()}`;
+    const response = { setHeader() {} } as unknown as import("node:http").ServerResponse;
+    try {
+      await pool.query(
+        `INSERT INTO api_rate_limit_buckets (bucket_key, request_count, reset_at)
+         SELECT 'expired-test-' || value::text, 1, NOW() - INTERVAL '1 second'
+         FROM generate_series(1, 3) AS value`,
+      );
+      const results = await Promise.all([
+        consumeConfiguredRateLimit({
+          backend: "postgres",
+          bucketKey,
+          buckets: new Map(),
+          pool,
+          response,
+          rule: { maxRequests: 1, windowMs: 60_000 },
+        }),
+        consumeConfiguredRateLimit({
+          backend: "postgres",
+          bucketKey,
+          buckets: new Map(),
+          pool,
+          response,
+          rule: { maxRequests: 1, windowMs: 60_000 },
+        }),
+      ]);
+      expect(results.filter((result) => result.allowed)).to.have.length(1);
+      expect(results.filter((result) => !result.allowed)).to.have.length(1);
+      const expired = await pool.query<{ count: string }>(
+        "SELECT COUNT(*)::text AS count FROM api_rate_limit_buckets WHERE bucket_key LIKE 'expired-test-%'",
+      );
+      expect(expired.rows[0]?.count).to.equal("0");
+    } finally {
+      await pool.query("DELETE FROM api_rate_limit_buckets WHERE bucket_key = $1", [bucketKey]);
+      await pool.query("DELETE FROM api_rate_limit_buckets WHERE bucket_key LIKE 'expired-test-%'");
+      await pool.end();
     }
   });
 

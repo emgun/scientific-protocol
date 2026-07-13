@@ -36,12 +36,38 @@ PyPI API token.
 1. Update the `package.json` version.
 2. Run `npm run lint`, `npm run typecheck`, `npm run test:all`, and `npm run gas:check`.
 3. Commit the version change.
-4. Tag the commit as `vX.Y.Z`, matching `package.json`.
+4. Create an annotated, trusted-signer tag as `vX.Y.Z`, matching `package.json`.
 5. Push `main` and the tag.
 6. Confirm the `Release` workflow passes and npm shows the new version.
 
-The workflow refuses to publish if the tag does not match `package.json` or if the package version
-already exists on npm.
+The workflow refuses to publish if the tag does not match `package.json`, is not signed by a key in
+`ops/release-allowed-signers`, does not point to the current reviewed `origin/main`, still has an
+`Unreleased` changelog heading, or if the package version already exists on npm.
+
+The `Release` workflow publishes npm first, then immutable version and checked-out-commit image tags
+to `ghcr.io/emgun/scientific-protocol-service`, attests the image, and creates the GitHub Release.
+Container publication cannot run if npm validation or publication fails. It does not publish
+`latest`. Before creating the GitHub Release, a separate credential-free job proves that the image
+is anonymously pullable by immutable digest. A first GHCR publication may require confirming the
+package identity and changing its visibility to public in GitHub's package settings; then use
+GitHub's **re-run failed jobs** action on the same run. A fresh dispatch correctly rejects an
+already-published npm version.
+
+For the prepared breaking release, the exact next release action after review and merge is:
+
+```bash
+git -c gpg.format=ssh -c user.signingkey="$HOME/.ssh/id_ed25519" \
+  tag -s v0.3.0 -m "scientific-protocol 0.3.0"
+git -c gpg.format=ssh \
+  -c gpg.ssh.allowedSignersFile=ops/release-allowed-signers \
+  verify-tag v0.3.0
+git push origin main v0.3.0
+```
+
+Do not create that tag until CI, the package dry run, a credential-free container smoke, and the
+0.3.0 deployment/migration review pass. After publication, deploy the GHCR image by digest and
+record the digest with the deployment manifest and database backup. See
+[reference-service.md](./reference-service.md) and [migrations/0.3.0.md](./migrations/0.3.0.md).
 
 ## PyPI Release Sequence
 

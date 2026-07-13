@@ -157,6 +157,8 @@ export async function attemptSourceAutoPublication(
   let publishedClaimId: string | null = null;
   let sourceAfterDecision = source;
   let winningCandidate: SourceExtractionCandidate | null = null;
+  let decisionReason = decision.reason;
+  let shouldPublish = decision.shouldPublish;
 
   if (decision.shouldPublish && decision.winningCluster) {
     winningCandidate =
@@ -236,7 +238,8 @@ export async function attemptSourceAutoPublication(
           source,
         };
       }
-      publishedClaimId = reservation.attempt.claimId;
+      decisionReason = "awaiting_author_bond";
+      shouldPublish = false;
     } else {
       try {
         const result = await createClaim(
@@ -259,12 +262,20 @@ export async function attemptSourceAutoPublication(
               await markSourcePublicationClaimReady(pool, {
                 claimId: checkpoint.claimId,
                 sourceId,
-                transactionHashes: checkpoint.txHashes,
+                transactionHashes: {
+                  addArtifact: checkpoint.txHashes.addArtifact,
+                  createClaim: checkpoint.txHashes.createClaim,
+                },
               });
             },
           },
         );
-        publishedClaimId = result.claimId;
+        if (result.publicationStatus === "awaiting_author_bond") {
+          decisionReason = "awaiting_author_bond";
+          shouldPublish = false;
+        } else {
+          publishedClaimId = result.claimId;
+        }
       } catch (error) {
         await markSourcePublicationReconciliationRequired(pool, {
           error: error instanceof Error ? error.message : String(error),
@@ -273,12 +284,20 @@ export async function attemptSourceAutoPublication(
         throw error;
       }
     }
-    await syncClaimReadModel(env);
-    sourceAfterDecision =
-      (await markSourcePublished(pool, {
-        publishedClaimId,
-        sourceId,
-      })) ?? source;
+    if (publishedClaimId) {
+      await syncClaimReadModel(env);
+      sourceAfterDecision =
+        (await markSourcePublished(pool, {
+          publishedClaimId,
+          sourceId,
+        })) ?? source;
+    } else {
+      sourceAfterDecision =
+        (await updateSourceRecordStatus(pool, {
+          sourceId,
+          status: "ready_for_publication",
+        })) ?? source;
+    }
   } else if (decision.winningCluster) {
     sourceAfterDecision =
       (await updateSourceRecordStatus(pool, {
@@ -298,8 +317,8 @@ export async function attemptSourceAutoPublication(
       winningCandidate,
     }),
     publishedClaimId,
-    reason: decision.reason,
-    shouldPublish: decision.shouldPublish,
+    reason: decisionReason,
+    shouldPublish,
     sourceId,
     winningCluster: decision.winningCluster,
   });
@@ -308,7 +327,7 @@ export async function attemptSourceAutoPublication(
   }
   return {
     publishedClaimId,
-    reason: decision.reason,
+    reason: decisionReason,
     source: sourceAfterDecision,
   };
 }

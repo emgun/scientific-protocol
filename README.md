@@ -13,7 +13,7 @@ indexers, APIs, workers, and storage services remain replaceable node infrastruc
 ## Quickstart (10 minutes)
 
 Every gateway command below is exercised by a daily CI smoke against the live gateway
-([gateway-smoke.yml](.github/workflows/gateway-smoke.yml)) — if it is in this section, it works.
+([gateway-smoke.yml](https://github.com/emgun/scientific-protocol/blob/main/.github/workflows/gateway-smoke.yml)) — if it is in this section, it works.
 
 **1. Read protocol state — no install, no key, no account:**
 
@@ -65,10 +65,9 @@ contract bindings, and reference modules for nodes and downstream applications. 
 consume those interfaces through package releases, contract metadata, deployment metadata, direct
 chain access, or the reference API.
 
-The public command surface is intentionally small: build and test the contracts, regenerate
-bindings, run a local EVM node, and deploy the protocol contracts to a configured RPC endpoint.
-Application hosting, product release automation, and operated-service scheduling belong in
-downstream application or operator repositories.
+The public package also ships a versioned reference-service runtime for gateways, indexers,
+migrations, and workers. Deployment credentials, scheduling policy, product hosting, and incident
+response remain downstream operator responsibilities.
 
 ## Protocol Surface
 
@@ -77,6 +76,7 @@ downstream application or operator repositories.
 - JSON Schemas for canonical claim, replication, evaluation, and artifact-storage payloads
 - TypeScript SDK, generated contract bindings, and Python client
 - Reference API, indexer, worker, and read-model modules
+- A deployment-generated Graph subgraph for decentralized claim/evidence/governance queries
 - Source ingress, artifact persistence, review, work routing, and reward settlement primitives
 - Hardhat tests plus Foundry fuzz, invariant, and gas checks
 
@@ -122,6 +122,24 @@ npm run gas:snapshot
 
 Release process: see [docs/release.md](docs/release.md).
 
+Build and smoke the production reference-service container without credentials:
+
+```bash
+docker build \
+  --build-arg VERSION=0.3.0 \
+  --build-arg REVISION="$(git rev-parse HEAD)" \
+  --build-arg CREATED="$(git show -s --format=%cI)" \
+  -t scientific-protocol-service:0.3.0 .
+docker run --rm scientific-protocol-service:0.3.0 help
+```
+
+See [docs/reference-service.md](docs/reference-service.md) for service modes, migration commands,
+health/readiness, immutable image deployment, and rollback.
+
+Independent operators can follow [Run your own gateway](docs/run-your-own-gateway.md). External
+agents can use the credential-free [TypeScript and Python examples](examples/external-agent), and
+decentralized query operators can build the [v0.3 subgraph](docs/subgraph.md).
+
 ## Local Protocol Stack
 
 Start a local Hardhat node:
@@ -164,6 +182,11 @@ Useful routes include:
 
 Set `SP_API_MODE=read-model-optional` for deployments that expose health and write configuration
 without a configured read-model database.
+
+The packaged service defaults to `SP_SERVICE_MODE=read-only`. Use
+`SP_SERVICE_MODE=write-enabled` only for separately credentialed gateways or mutation workers.
+Apply database migrations explicitly with `scientific-protocol-service migrate`; API processes do
+not migrate implicitly.
 
 ## Repository Map
 

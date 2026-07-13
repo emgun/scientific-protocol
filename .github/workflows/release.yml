@@ -42,6 +42,8 @@ jobs:
       - name: Checkout release ref
         uses: actions/checkout@v7
         with:
+          fetch-depth: 0
+          fetch-tags: true
           ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Setup Node
@@ -67,8 +69,10 @@ jobs:
         run: npm ci
 
       - name: Validate tag and package metadata
+        env:
+          RELEASE_REF: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          release_ref="${{ github.event.inputs.tag || github.ref_name }}"
+          release_ref="$RELEASE_REF"
           package_name="$(node -p "require('./package.json').name")"
           package_version="$(node -p "require('./package.json').version")"
           tag_version="${release_ref#v}"
@@ -78,6 +82,21 @@ jobs:
           fi
           if npm view "$package_name@$package_version" version --json >/dev/null 2>&1; then
             echo "$package_name@$package_version is already published"
+            exit 1
+          fi
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          test "$(git cat-file -t "refs/tags/$release_ref")" = "tag"
+          git -c gpg.format=ssh \
+            -c gpg.ssh.allowedSignersFile=ops/release-allowed-signers \
+            verify-tag "$release_ref"
+          tag_commit="$(git rev-list -n 1 "$release_ref")"
+          main_commit="$(git rev-parse origin/main)"
+          if [ "$tag_commit" != "$main_commit" ]; then
+            echo "Release tag $release_ref must point to reviewed origin/main $main_commit"
+            exit 1
+          fi
+          if grep -F "## [$package_version] — Unreleased" CHANGELOG.md; then
+            echo "CHANGELOG.md must date $package_version before publication"
             exit 1
           fi
 
@@ -106,3 +125,112 @@ jobs:
 
       - name: Publish to npm
         run: npm publish --access public
+
+  publish-container:
+    name: Publish reference service container
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - name: Checkout release ref
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Resolve immutable image metadata
+        id: release
+        shell: bash
+        env:
+          RELEASE_REF: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          release_ref="$RELEASE_REF"
+          package_version="$(node -p "require('./package.json').version")"
+          test "$release_ref" = "v$package_version"
+          revision="$(git rev-parse HEAD)"
+          echo "version=$package_version" >> "$GITHUB_OUTPUT"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+          echo "created=$(git show -s --format=%cI)" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish immutable service image
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          provenance: mode=max
+          sbom: true
+          build-args: |
+            VERSION=${{ steps.release.outputs.version }}
+            REVISION=${{ steps.release.outputs.revision }}
+            CREATED=${{ steps.release.outputs.created }}
+          tags: |
+            ghcr.io/emgun/scientific-protocol-service:${{ steps.release.outputs.version }}
+            ghcr.io/emgun/scientific-protocol-service:sha-${{ steps.release.outputs.revision }}
+
+      - name: Attest image provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ghcr.io/emgun/scientific-protocol-service
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+  verify-public-container:
+    name: Verify anonymous container pull
+    needs: publish-container
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Verify the released image is public by immutable digest
+        env:
+          IMAGE: ghcr.io/emgun/scientific-protocol-service@${{ needs.publish-container.outputs.digest }}
+        run: |
+          clean_config="$(mktemp -d)"
+          trap 'rm -rf "$clean_config"' EXIT
+          for attempt in $(seq 1 12); do
+            if DOCKER_CONFIG="$clean_config" docker buildx imagetools inspect "$IMAGE"; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "GHCR image is not anonymously pullable. Confirm the package identity, make it public, and re-run failed jobs."
+          exit 1
+
+  github-release:
+    name: Create GitHub Release
+    needs: verify-public-container
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout release ref
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Create release if absent
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "GitHub Release $RELEASE_TAG already exists"
+          else
+            gh release create "$RELEASE_TAG" --generate-notes --verify-tag
+          fi

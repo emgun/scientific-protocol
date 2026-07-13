@@ -82,12 +82,16 @@ export async function generateContractArtifacts(): Promise<void> {
     return leftKey.localeCompare(rightKey);
   });
 
-  const deployableArtifacts = artifacts.filter(
+  // Mocks are compiled for contract tests but are not part of the public protocol package.
+  const publishedArtifacts = artifacts.filter(
+    (artifact) => !artifact.sourceName.includes("/mocks/"),
+  );
+  const deployableArtifacts = publishedArtifacts.filter(
     (artifact) =>
       (artifact.bytecode ?? "0x") !== "0x" && !artifact.sourceName.includes("/interfaces/"),
   );
 
-  const artifactBlocks = artifacts.map((artifact) => {
+  const artifactBlocks = publishedArtifacts.map((artifact) => {
     const identifier = toArtifactIdentifier(artifact.contractName);
     const serialized = toJsonLiteral(
       {
@@ -102,7 +106,7 @@ export async function generateContractArtifacts(): Promise<void> {
     return `export const ${identifier} = ${serialized} as const satisfies GeneratedContractArtifact;`;
   });
 
-  const generatedMap = artifacts
+  const generatedMap = publishedArtifacts
     .map(
       (artifact) =>
         `  ${JSON.stringify(artifact.contractName)}: ${toArtifactIdentifier(artifact.contractName)},`,

@@ -1506,10 +1506,12 @@ export async function buildWriteProtocolConfigPayload(
   return {
     accessControllerAddress: deployment.addresses.accessController,
     artifactRegistryAddress: deployment.addresses.artifactRegistry,
+    authorBondWei: deployment.parameters.minimumAuthorBondWei,
     bondEscrowAddress: deployment.addresses.bondEscrow,
     chainId: deployment.chainId,
     claimRegistryAddress: deployment.addresses.claimRegistry,
     claimRewardVaultAddress: deployment.addresses.claimRewardVault,
+    minimumAuthorBondWei: deployment.parameters.minimumAuthorBondWei,
     network: deployment.network,
     operatorLifecycleAuth: {
       bearerTokenFallbackEnabled: operatorTokenFallbackEnabled(env),

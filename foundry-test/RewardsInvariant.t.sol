@@ -171,8 +171,8 @@ contract AgentBudgetHandler is Test {
         if (!agent.active) {
             return;
         }
-        uint256 headroom =
-            agent.spendLimit > agent.reservedBudget ? agent.spendLimit - agent.reservedBudget : 0;
+        uint256 committed = agent.spentBudget + agent.reservedBudget;
+        uint256 headroom = agent.spendLimit > committed ? agent.spendLimit - committed : 0;
         if (agent.budgetBalance <= agent.reservedBudget) {
             return;
         }
@@ -237,7 +237,9 @@ contract AgentBudgetHandler is Test {
         if (agentId == 0) {
             return;
         }
-        agents.setSpendLimit(agentId, bound(limitSeed, 0, 100 ether));
+        AgentRegistry.AgentRecord memory agent = agents.getAgent(agentId);
+        uint256 committed = agent.spentBudget + agent.reservedBudget;
+        agents.setSpendLimit(agentId, bound(limitSeed, committed, committed + 100 ether));
     }
 
     function trackedBudgets() external view returns (uint256 total) {
@@ -277,6 +279,15 @@ contract AgentBudgetInvariantTest is StdInvariant, ProtocolDeployer {
         for (uint256 agentId = 1; agentId < nextAgentId; agentId++) {
             AgentRegistry.AgentRecord memory agent = agentRegistry.getAgent(agentId);
             assertLe(agent.reservedBudget, agent.budgetBalance);
+        }
+    }
+
+    /// @dev Lifetime consumed value plus live reservations must never exceed the operator's cap.
+    function invariant_CommittedSpendNeverExceedsLifetimeLimit() public view {
+        uint256 nextAgentId = agentRegistry.nextAgentId();
+        for (uint256 agentId = 1; agentId < nextAgentId; agentId++) {
+            AgentRegistry.AgentRecord memory agent = agentRegistry.getAgent(agentId);
+            assertLe(agent.spentBudget + agent.reservedBudget, agent.spendLimit);
         }
     }
 }

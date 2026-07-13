@@ -56,7 +56,20 @@ export type PersistedArtifactReplicaView = ProtocolRecord;
 export type PersistedArtifactView = ProtocolRecord;
 export type ProductionArtifactDraftInput = ProtocolRecord;
 export type ProductionArtifactDraftResult = ProtocolRecord;
-export type ProductionClaimInput = ProtocolRecord;
+export type ProductionClaimInput = {
+  artifactSha256: string;
+  artifactType?: number;
+  artifactUri: string;
+  authorBondEth?: string;
+  domainId?: number;
+  metadata?: string;
+  methodology?: string;
+  openReplicationJob?: boolean;
+  predictionHooks?: string;
+  requestedBy?: string;
+  scope?: string;
+  statement: string;
+};
 export type ProductionClaimResult = ProtocolRecord;
 export type ReadModelCounts = Record<string, number>;
 export type RecipientRewardStateView = ProtocolRecord;
@@ -81,6 +94,7 @@ export type WriteProtocolConfigView = ProtocolRecord;
 
 export type PublicWriteActionType =
   | "claim_create"
+  | "claim_publish"
   | "claim_draft_from_artifact"
   | "domain_recompute"
   | "replication_job_open"
@@ -308,6 +322,13 @@ export type SignedAgentRequestBody = {
 export type SignedPublicWriteRequestBody = {
   envelope: PublicWriteEnvelope;
   signature: string;
+};
+
+export type SignedClaimCreateRequestBody = Omit<SignedPublicWriteRequestBody, "envelope"> & {
+  envelope: Omit<PublicWriteEnvelope, "actionType" | "payload"> & {
+    actionType: "claim_create";
+    payload: ProductionClaimInput;
+  };
 };
 
 export type PersistedArtifactDetailResponse = PersistedArtifactView & {

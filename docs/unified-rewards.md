@@ -110,8 +110,25 @@ content-addressed artifacts offchain.
 But the runtime is no longer built around “resolver drains the remaining replication bounty to the
 replicator on success.”
 
+For deployments that still use this legacy bounty path, a reservation is keyed to an existing
+claim-local replication, derives its recipient from that replication's submitter, and cannot be
+released before the replication is resolved. An operational bounty settler may reserve and release
+that deterministic payout, but only the timelocked escrow administrator may terminally cancel a
+mistaken reservation. Author-bond refunds derive the claim author and slashes derive the immutable
+protocol treasury. A refund governance action only credits the recorded author; the author later
+pulls that credit to a chosen valid recipient. Administrators cannot redirect either value path,
+and a reverting author contract cannot block the refund-credit action. These constraints protect
+accounting and binding; they do not define which scientific outcomes deserve payment.
+
 The resolver path now records resolution only. Reward movement is handled by the claim reward
 vault and explicit reward settlement.
+
+`EpistemicMarket` maintains a separate pull-credit balance for its stake-backed forecast and
+challenge lifecycle. Positive forecast settlement, delayed forecast reclaim, challenge withdrawal,
+and sustained or escalated challenge resolution accrue to the immutable forecaster or challenger.
+That beneficiary withdraws with `withdrawPayout(amount, recipient)`. This keeps market terminal
+state independent of recipient fallback behavior while leaving the reward pool and claim reward
+vault as distinct accounting domains.
 
 ## Runtime integration
 

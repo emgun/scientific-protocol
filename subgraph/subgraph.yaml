@@ -1,0 +1,150 @@
+specVersion: 1.3.0
+indexerHints:
+  prune: auto
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: ethereum/contract
+    name: ClaimRegistry
+    network: localhost
+    source:
+      address: "0x09635F643e140090A9A8Dcd712eD6285858ceBef"
+      abi: ClaimRegistry
+      startBlock: 56
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities: [Claim, ResolutionDecision]
+      abis:
+        - name: ClaimRegistry
+          file: ./abis/ClaimRegistry.json
+      eventHandlers:
+        - event: ClaimCreated(indexed uint256,indexed address,indexed uint64,bytes32,address,uint256)
+          handler: handleClaimCreated
+        - event: ClaimRevised(indexed uint256,indexed uint256,indexed address)
+          handler: handleClaimRevised
+        - event: ClaimStatusUpdated(indexed uint256,uint8,uint8,indexed address)
+          handler: handleClaimStatusUpdated
+        - event: ResolutionDecisionRecorded(indexed uint256,indexed uint256,indexed uint256,address,uint8,uint8,uint16,bytes32,bytes32,uint8,address)
+          handler: handleResolutionDecisionRecorded
+        - event: EffectiveResolutionDecisionUpdated(indexed uint256,indexed uint256,indexed uint8,address)
+          handler: handleEffectiveResolutionDecisionUpdated
+      file: ./src/claim-registry.ts
+  - kind: ethereum/contract
+    name: ArtifactRegistry
+    network: localhost
+    source:
+      address: "0xc5a5C42992dECbae36851359345FE25997F5C42d"
+      abi: ArtifactRegistry
+      startBlock: 56
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities: [Artifact]
+      abis:
+        - name: ArtifactRegistry
+          file: ./abis/ArtifactRegistry.json
+      eventHandlers:
+        - event: ArtifactAdded(indexed uint256,indexed uint256,uint8,bytes32,string,indexed address)
+          handler: handleArtifactAdded
+      file: ./src/artifact-registry.ts
+  - kind: ethereum/contract
+    name: ReplicationRegistry
+    network: localhost
+    source:
+      address: "0x84eA74d481Ee0A5332c457a4d796187F6Ba67fEB"
+      abi: ReplicationRegistry
+      startBlock: 56
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities: [Replication]
+      abis:
+        - name: ReplicationRegistry
+          file: ./abis/ReplicationRegistry.json
+      eventHandlers:
+        - event: ReplicationSubmitted(indexed uint256,indexed uint256,indexed address,uint256,bytes32)
+          handler: handleReplicationSubmitted
+        - event: ReplicationResolved(indexed uint256,uint8,uint8,bytes32,indexed address,uint16,uint8,bytes32,string)
+          handler: handleReplicationResolved
+      file: ./src/replication-registry.ts
+  - kind: ethereum/contract
+    name: ReputationCheckpointRegistry
+    network: localhost
+    source:
+      address: "0x9E545E3C0baAB3E08CdfD552C960A1050f373042"
+      abi: ReputationCheckpointRegistry
+      startBlock: 56
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities: [ReputationCheckpoint]
+      abis:
+        - name: ReputationCheckpointRegistry
+          file: ./abis/ReputationCheckpointRegistry.json
+      eventHandlers:
+        - event: ReputationCheckpointPublished(indexed uint256,indexed uint64,indexed uint8,address,uint256,uint256,address,bytes32,bytes32,string)
+          handler: handleReputationCheckpointPublished
+      file: ./src/checkpoint-registry.ts
+  - kind: ethereum/contract
+    name: AgentRegistry
+    network: localhost
+    source:
+      address: "0xE6E340D132b5f46d1e472DebcD681B2aBc16e57E"
+      abi: AgentRegistry
+      startBlock: 56
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities: [Agent]
+      abis:
+        - name: AgentRegistry
+          file: ./abis/AgentRegistry.json
+      eventHandlers:
+        - event: AgentRegistered(indexed uint256,indexed address,bytes32,string,uint256)
+          handler: handleAgentRegistered
+        - event: AgentStatusUpdated(indexed uint256,bool,indexed address)
+          handler: handleAgentStatusUpdated
+        - event: AgentSpendLimitUpdated(indexed uint256,uint256,indexed address)
+          handler: handleAgentSpendLimitUpdated
+        - event: AgentBudgetDeposited(indexed uint256,indexed address,uint256)
+          handler: handleAgentBudgetDeposited
+        - event: AgentBudgetReserved(indexed uint256,uint256,indexed address)
+          handler: handleAgentBudgetReserved
+        - event: AgentBudgetReleased(indexed uint256,uint256,indexed address)
+          handler: handleAgentBudgetReleased
+        - event: AgentBudgetConsumed(indexed uint256,uint256,indexed address,address)
+          handler: handleAgentBudgetConsumed
+        - event: AgentBudgetWithdrawn(indexed uint256,uint256,indexed address)
+          handler: handleAgentBudgetWithdrawn
+      file: ./src/agent-registry.ts
+  - kind: ethereum/contract
+    name: ProtocolGovernor
+    network: localhost
+    source:
+      address: "0x95401dc811bb5740090279Ba06cfA8fcF6113778"
+      abi: ProtocolGovernor
+      startBlock: 56
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities: [GovernanceProposal]
+      abis:
+        - name: ProtocolGovernor
+          file: ./abis/ProtocolGovernor.json
+      eventHandlers:
+        - event: ProposalCreated(uint256,address,address[],uint256[],string[],bytes[],uint256,uint256,string)
+          handler: handleProposalCreated
+        - event: ProposalQueued(uint256,uint256)
+          handler: handleProposalQueued
+        - event: ProposalExecuted(uint256)
+          handler: handleProposalExecuted
+        - event: ProposalCanceled(uint256)
+          handler: handleProposalCanceled
+      file: ./src/governor.ts

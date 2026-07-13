@@ -49,10 +49,18 @@ Local and staging deployment now perform this handoff:
 2. deploy governance token, timelock, governor, and treasury
 3. mint bootstrap voting units to configured operator accounts
 4. grant the timelock proposer/canceller integration with the governor
-5. grant the timelock `DEFAULT_ADMIN_ROLE`, `PARAMETER_ADMIN_ROLE`, and `MODULE_ADMIN_ROLE`
+5. grant the timelock `DEFAULT_ADMIN_ROLE`, `PARAMETER_ADMIN_ROLE`, `MODULE_ADMIN_ROLE`, and
+   author-bond custody through `ESCROW_ADMIN_ROLE`
 6. transfer token ownership and treasury ownership to the timelock
 7. revoke the deployer's sensitive admin roles
-8. retain operational roles such as resolver/checkpoint publisher on the existing operator accounts
+8. retain operational roles such as resolver, bounty settler, and checkpoint publisher on the
+   existing operator accounts; no operator EOA retains `ESCROW_ADMIN_ROLE`
+
+Remote deployments require separate admin, claim-submitter, replication-submitter, resolver, and
+checkpoint-publisher keys. The deploy script verifies both explicit key configuration and distinct
+derived addresses before sending its first transaction. The shared `SP_OPERATOR_PRIVATE_KEY`
+fallback remains available only for local chain `31337`, where deterministic Hardhat signer indexes
+keep the roles separate by default.
 
 That leaves governance in control of sensitive administration without breaking the existing resolver and demo flows.
 

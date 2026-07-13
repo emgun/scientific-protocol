@@ -7,6 +7,8 @@ import {DepositPausable} from "./utils/DepositPausable.sol";
 import {ProtocolRoles} from "./libraries/ProtocolRoles.sol";
 import {IAgentRegistry} from "./interfaces/IAgentRegistry.sol";
 
+/// @title AgentRegistry
+/// @notice Agent identities, controller permissions, and lifetime-capped native-token budgets.
 contract AgentRegistry is DepositPausable, ReentrancyGuard, IAgentRegistry {
     error AgentRegistryUnknownAgent(uint256 agentId);
     error AgentRegistryUnauthorizedAgent(uint256 agentId, address actor);
@@ -16,6 +18,11 @@ contract AgentRegistry is DepositPausable, ReentrancyGuard, IAgentRegistry {
     error AgentRegistryTransferFailed(address recipient, uint256 amount);
     error AgentRegistryInvalidRecipient(address recipient);
     error AgentRegistryInactiveAgent(uint256 agentId);
+    error AgentRegistrySpendLimitBelowCommitted(
+        uint256 agentId,
+        uint256 requestedLimit,
+        uint256 committed
+    );
 
     struct AgentRecord {
         uint256 agentId;
@@ -24,6 +31,7 @@ contract AgentRegistry is DepositPausable, ReentrancyGuard, IAgentRegistry {
         string uri;
         uint256 budgetBalance;
         uint256 reservedBudget;
+        uint256 spentBudget;
         uint256 spendLimit;
         bool active;
     }
@@ -79,6 +87,7 @@ contract AgentRegistry is DepositPausable, ReentrancyGuard, IAgentRegistry {
             uri: uri,
             budgetBalance: msg.value,
             reservedBudget: 0,
+            spentBudget: 0,
             spendLimit: spendLimit,
             active: true
         });
@@ -96,8 +105,14 @@ contract AgentRegistry is DepositPausable, ReentrancyGuard, IAgentRegistry {
         emit AgentControllerAuthorization(agent.agentId, controller, authorized);
     }
 
+    /// @notice Updates the agent's lifetime spend ceiling.
+    /// @dev The ceiling cannot be reduced below value already consumed plus live reservations.
     function setSpendLimit(uint256 agentId, uint256 spendLimit) external {
         AgentRecord storage agent = _requireOperator(agentId);
+        uint256 committed = agent.spentBudget + agent.reservedBudget;
+        if (spendLimit < committed) {
+            revert AgentRegistrySpendLimitBelowCommitted(agentId, spendLimit, committed);
+        }
         agent.spendLimit = spendLimit;
         emit AgentSpendLimitUpdated(agentId, spendLimit, msg.sender);
     }
@@ -124,6 +139,8 @@ contract AgentRegistry is DepositPausable, ReentrancyGuard, IAgentRegistry {
         emit AgentBudgetDeposited(agentId, msg.sender, msg.value);
     }
 
+    /// @notice Reserves value without allowing lifetime consumed plus reserved value to exceed the
+    /// agent-controlled spend ceiling.
     function reserveBudget(
         uint256 agentId,
         uint256 amount
@@ -135,8 +152,9 @@ contract AgentRegistry is DepositPausable, ReentrancyGuard, IAgentRegistry {
         }
 
         uint256 reservedAfter = agent.reservedBudget + amount;
-        if (reservedAfter > agent.spendLimit) {
-            revert AgentRegistrySpendLimitExceeded(agentId, reservedAfter, agent.spendLimit);
+        uint256 committedAfter = agent.spentBudget + reservedAfter;
+        if (committedAfter > agent.spendLimit) {
+            revert AgentRegistrySpendLimitExceeded(agentId, committedAfter, agent.spendLimit);
         }
         if (agent.budgetBalance < reservedAfter) {
             revert AgentRegistryInsufficientBudget(agentId, reservedAfter, agent.budgetBalance);
@@ -179,6 +197,7 @@ contract AgentRegistry is DepositPausable, ReentrancyGuard, IAgentRegistry {
 
         agent.reservedBudget -= amount;
         agent.budgetBalance -= amount;
+        agent.spentBudget += amount;
         _safeTransferValue(recipient, amount);
         emit AgentBudgetConsumed(agentId, amount, recipient, msg.sender);
     }

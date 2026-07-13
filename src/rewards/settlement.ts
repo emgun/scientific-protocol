@@ -10,6 +10,7 @@ import { readReviewSubmissionsPage, readReviewTask, readReviewTasksPage } from "
 import { getContract } from "../shared/contracts.js";
 import { getDeploymentPath, loadDeploymentFile } from "../shared/deployment.js";
 import { createManagedOperatorSigner } from "../shared/operator.js";
+import { readAllPages } from "../shared/pagination.js";
 import {
   CLAIM_REWARD_WORK_KIND_CODES,
   type ClaimRewardWorkKind,
@@ -256,18 +257,18 @@ async function findClaimIdForArtifactKey(
   artifactKey: string,
 ): Promise<string> {
   const [reviewTasks, reviewSubmissions, replicationJobs] = await Promise.all([
-    readReviewTasksPage(pool, { limit: 1000, offset: 0 }),
-    readReviewSubmissionsPage(pool, { limit: 1000, offset: 0 }),
-    readReplicationJobsPage(pool, { limit: 1000, offset: 0 }),
+    readAllPages((pagination) => readReviewTasksPage(pool, pagination)),
+    readAllPages((pagination) => readReviewSubmissionsPage(pool, pagination)),
+    readAllPages((pagination) => readReplicationJobsPage(pool, pagination)),
   ]);
-  const reviewTask = reviewTasks.items.find(
+  const reviewTask = reviewTasks.find(
     (task) =>
       task.resultArtifactKey === artifactKey || task.inputArtifactKeys.includes(artifactKey),
   );
   if (reviewTask?.claimId) {
     return reviewTask.claimId;
   }
-  const reviewSubmission = reviewSubmissions.items.find(
+  const reviewSubmission = reviewSubmissions.find(
     (submission) =>
       submission.resultArtifactKey === artifactKey ||
       submission.evidenceArtifactKey === artifactKey,
@@ -275,7 +276,7 @@ async function findClaimIdForArtifactKey(
   if (reviewSubmission?.claimId) {
     return reviewSubmission.claimId;
   }
-  const replicationJob = replicationJobs.items.find((job) => job.resultArtifactKey === artifactKey);
+  const replicationJob = replicationJobs.find((job) => job.resultArtifactKey === artifactKey);
   if (replicationJob) {
     return replicationJob.claimId;
   }

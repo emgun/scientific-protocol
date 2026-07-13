@@ -1,6 +1,6 @@
 # Security Review
 
-Date: April 23, 2026 (updated June 10, 2026 after the market, appeals, and registry hardening pass)
+Date: April 23, 2026 (updated July 12, 2026 after the escrow, resolution, and agent-budget hardening pass)
 
 Use [current-state.md](./current-state.md) for the canonical architecture narrative. This
 document is narrower: it captures the current security posture and the still-open security work for
@@ -27,13 +27,15 @@ not the authority boundary.
 
 ### Reentrancy and value transfer
 
-- `BondEscrow`, `AgentRegistry`, and `ClaimRewardVault` use `SimpleReentrancyGuard` on
+- `BondEscrow`, `AgentRegistry`, and `ClaimRewardVault` use reentrancy guards on
   value-moving paths.
 - Value transfers occur after state updates in those contracts.
 - The unified reward layer uses pull-based recipient withdrawals through `ClaimRewardVault`.
-- `BondEscrow` still retains older push-style bond and bounty release paths for legacy escrow
-  flows. Production hardening should keep narrowing those remaining push-style paths or define a
-  stricter recipient-failure policy around them.
+- Author-bond refunds use pull-based credits in `BondEscrow`; the timelocked escrow administrator
+  cannot choose the withdrawal recipient. Legacy replication bounty releases and treasury slashes
+  remain push transfers to recipients fixed by immutable protocol state.
+- Forecast and challenge payouts use beneficiary-owned credits in `EpistemicMarket`. Settlement,
+  reclaim, withdrawal, and resolution therefore cannot be blocked by a reverting beneficiary.
 
 ### Authorization and write attribution
 
@@ -54,28 +56,71 @@ not the authority boundary.
 - Author bond, bounty balance, and reserved bounty balance are tracked separately.
 - Reservations are single-use and cannot be released twice.
 - Reservation amount cannot exceed currently unreserved bounty balance.
-- Author bond slash and refund paths cannot exceed the tracked bond balance.
+- Bounty reservations are bound to an existing replication under the named claim. The recipient
+  is derived from the replication submitter instead of supplied by the escrow administrator.
+- Reserved bounty can be released only after the replication has a recorded resolution. An escrow
+  administrator can terminally cancel an unreleased reservation without moving value.
+- Author bond slash and refund-credit paths cannot exceed the tracked bond balance. Credited value
+  can be withdrawn only by that author, uses checks-effects-interactions plus `nonReentrant`, and
+  can be routed to a valid recipient if the author contract rejects ETH.
 - Reward settlements now have explicit settlement entries and pull-based withdrawal paths in the
   newer unified reward layer.
 - Forecast settlement requires the reveal window to be closed for unrevealed forecasts, and
   unrevealed forecasts always forfeit their stake to the reward pool. Refunding them would allow
   committing opposite forecasts and revealing only the winner.
+- Unrevealed forecasts have a permissionless terminal forfeit after the reveal deadline. It does
+  not depend on settler availability or a newer claim decision, emits the canonical pending/no-
+  decision settlement record, and cannot run twice.
 - Revealed forecasts that the settler never settles can be reclaimed (stake only, no bonus) after
-  a long settler-inactivity delay.
+  a long settler-inactivity delay. Reclaim and matched settlement accrue pull credits rather than
+  making recipient calls.
 - Challenge bonds stay committed for a minimum challenge duration, so a challenger cannot rescue a
-  bond by withdrawing just ahead of a dismissal.
+  bond by withdrawing just ahead of a dismissal. Withdrawal and sustained/escalated resolution
+  accrue pull credits; dismissal moves the bond into the reward pool.
+- Market payout withdrawal is beneficiary-authorized, uses checks-effects-interactions plus
+  `nonReentrant`, and allows a contract beneficiary to select a recipient that accepts ETH.
 - Appeal bonds are outcome-dependent: lost appeals (`Rejected`, `Upheld`) forfeit to the protocol
   treasury, won or closed appeals are credited for pull-based withdrawal, so a reverting appellant
   contract cannot block adjudication.
-- New claims enforce a governance-set minimum author bond read from `ProtocolParameters`.
+- New claims enforce a governance-set minimum author bond read from `ProtocolParameters`, and the
+  complete claim-declared bond must be deposited before the claim can become `Published`.
 - Challenges and appeals validate that referenced replication and challenge ids belong to the
   named claim before accepting value.
 - Resolution modules can be disabled by the module admin without rewriting claims already bound to
   them.
+- Resolution modules may reject by reverting or by returning `false`; either path leaves the
+  replication unresolved.
+- Resolution-derived claim statuses cannot be written directly. `ClaimRegistry` copies the result,
+  confidence, evidence, resolver type, module, replication, and claim linkage into an immutable
+  `ResolutionDecision`; later decisions remain recordable even when they cannot validly rewrite a
+  stronger or terminal claim state.
+- The latest recorded decision is only the append-only evidence tail. A separate effective decision
+  pointer advances exclusively when a decision establishes new claim state. A forecast snapshots
+  the effective pointer at commitment and can settle only against a strictly newer pointer, so
+  known outcomes cannot extract bonuses and later weaker evidence cannot reverse value settlement.
+- Operational `BOUNTY_SETTLER_ROLE` authority is limited to replication-bound reserve and release.
+  Timelocked `ESCROW_ADMIN_ROLE` controls terminal cancellation and author-bond movement; refunds
+  are credited to the claim author and slashes are fixed to the immutable protocol treasury. The
+  author, not the administrator, selects a refund withdrawal recipient.
+- Delegated claim creation binds each signed request hash to one onchain claim id. Renewable service
+  leases fence stale workers before chain writes; the onchain mapping is the final duplicate barrier.
+- Outbound HTTP transport pins every redirect hop to the exact DNS addresses that passed validation.
+- Repository ingestion passes the validated address to Git/libcurl and persists that pin in the
+  partial clone, so later promisor-object reads cannot independently re-resolve the hostname.
+  The release image explicitly carries Git and CA certificates so this path does not depend on
+  undeclared host tooling.
+- Exact source-submit recovery binds one request hash to one submission row. Accepted replays
+  reconstruct that row without consuming quotas or rewriting acceptance; pending and rejected
+  replays remain fenced and consume the configured client, actor, and canonical-source limits.
+- An agent spend limit is a lifetime ceiling over consumed value plus live reservations. Releasing
+  a reservation restores capacity, while consuming it permanently uses capacity. Raising the
+  ceiling is an explicit operator action; it cannot be lowered below committed value.
 
 ### Lifecycle safety
 
 - `ClaimRegistry` enforces an explicit status transition graph.
+- `ClaimRegistry` is bound once to the escrow and replication registry. This circular deployment
+  dependency is explicit and must be configured before deployment administration is renounced.
 - `ReplicationRegistry` prevents resolving a replication twice and validates module-specific status
   and resolver-type combinations before storing the result.
 - `ReputationCheckpointRegistry` validates claim, agent, and module subjects before publishing
@@ -126,8 +171,8 @@ not the authority boundary.
 ### Still recommended before public production rollout
 
 - independent contract and property review
-- further reduction of legacy `BondEscrow` push-style release reliance, or a stronger
-  recipient-failure policy around those paths
+- further reduction of legacy replication-bounty push-release reliance, or a stronger
+  recipient-failure policy around that remaining path
 - broader invariant and fuzz coverage beyond the current targeted hardening tests
 - explicit threat models for resolver compromise, checkpoint compromise, and malicious operator
   inactivity

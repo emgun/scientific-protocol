@@ -6,7 +6,10 @@ import {AccessManaged} from "./utils/AccessManaged.sol";
 import {DepositPausable} from "./utils/DepositPausable.sol";
 import {ProtocolRoles} from "./libraries/ProtocolRoles.sol";
 import {IClaimRegistry} from "./interfaces/IClaimRegistry.sol";
+import {IReplicationRegistry} from "./interfaces/IReplicationRegistry.sol";
 
+/// @title BondEscrow
+/// @notice Claim author bonds and claim-local replication bounties with bound recipients.
 contract BondEscrow is DepositPausable, ReentrancyGuard {
     error BondEscrowUnknownClaim(uint256 claimId);
     error BondEscrowUnauthorizedAuthor(uint256 claimId, address actor);
@@ -19,14 +22,28 @@ contract BondEscrow is DepositPausable, ReentrancyGuard {
     error BondEscrowReservationExists(uint256 claimId, uint256 replicationId);
     error BondEscrowReservationMissing(uint256 claimId, uint256 replicationId);
     error BondEscrowAlreadyReleased(uint256 claimId, uint256 replicationId);
+    error BondEscrowAlreadyCancelled(uint256 claimId, uint256 replicationId);
+    error BondEscrowUnknownReplication(uint256 replicationId);
+    error BondEscrowReplicationClaimMismatch(
+        uint256 claimId,
+        uint256 replicationId,
+        uint256 actualClaimId
+    );
+    error BondEscrowUnresolvedReplication(uint256 replicationId);
     error BondEscrowTransferFailed(address recipient, uint256 amount);
     error BondEscrowInvalidRecipient(address recipient);
     error BondEscrowInsufficientAuthorBond(uint256 claimId, uint256 requested, uint256 available);
+    error BondEscrowInsufficientAuthorRefundCredit(
+        address author,
+        uint256 requested,
+        uint256 available
+    );
 
     struct BountyReservation {
         address recipient;
         uint256 amount;
         bool released;
+        bool cancelled;
     }
 
     event AuthorBondDeposited(uint256 indexed claimId, address indexed funder, uint256 amount);
@@ -43,12 +60,27 @@ contract BondEscrow is DepositPausable, ReentrancyGuard {
         address indexed recipient,
         uint256 amount
     );
+    event BountyPayoutCancelled(
+        uint256 indexed claimId,
+        uint256 indexed replicationId,
+        address indexed recipient,
+        uint256 amount,
+        address actor
+    );
     event AuthorBondSlashed(uint256 indexed claimId, address indexed recipient, uint256 amount);
-    event AuthorBondRefunded(uint256 indexed claimId, address indexed recipient, uint256 amount);
+    event AuthorBondRefundCredited(uint256 indexed claimId, address indexed author, uint256 amount);
+    event AuthorBondRefundWithdrawn(
+        address indexed author,
+        address indexed recipient,
+        uint256 amount
+    );
 
     IClaimRegistry public immutable claimRegistry;
+    IReplicationRegistry public immutable replicationRegistry;
+    address public immutable slashRecipient;
 
     mapping(uint256 claimId => uint256 amount) public authorBondBalances;
+    mapping(address author => uint256 amount) public authorRefundCredits;
     mapping(uint256 claimId => uint256 amount) public bountyBalances;
     mapping(uint256 claimId => uint256 amount) public reservedBountyBalances;
     mapping(uint256 claimId => mapping(uint256 replicationId => BountyReservation reservation))
@@ -56,9 +88,14 @@ contract BondEscrow is DepositPausable, ReentrancyGuard {
 
     constructor(
         address accessController_,
-        address claimRegistry_
+        address claimRegistry_,
+        address replicationRegistry_,
+        address slashRecipient_
     ) AccessManaged(accessController_) {
+        _requireValidRecipient(slashRecipient_);
         claimRegistry = IClaimRegistry(claimRegistry_);
+        replicationRegistry = IReplicationRegistry(replicationRegistry_);
+        slashRecipient = slashRecipient_;
     }
 
     /// @notice Deposits the author bond for an existing claim.
@@ -98,12 +135,22 @@ contract BondEscrow is DepositPausable, ReentrancyGuard {
     function reserveBountyPayout(
         uint256 claimId,
         uint256 replicationId,
-        address recipient,
         uint256 amount
-    ) external onlyRole(ProtocolRoles.ESCROW_ADMIN_ROLE) {
+    ) external onlyRole(ProtocolRoles.BOUNTY_SETTLER_ROLE) {
         if (amount == 0) {
             revert BondEscrowInvalidAmount(amount);
         }
+        if (!claimRegistry.claimExists(claimId)) {
+            revert BondEscrowUnknownClaim(claimId);
+        }
+        if (!replicationRegistry.replicationExists(replicationId)) {
+            revert BondEscrowUnknownReplication(replicationId);
+        }
+        uint256 replicationClaimId = replicationRegistry.getReplicationClaimId(replicationId);
+        if (replicationClaimId != claimId) {
+            revert BondEscrowReplicationClaimMismatch(claimId, replicationId, replicationClaimId);
+        }
+        address recipient = replicationRegistry.getReplicationReplicator(replicationId);
         _requireValidRecipient(recipient);
 
         BountyReservation storage reservation = _reservations[claimId][replicationId];
@@ -126,13 +173,19 @@ contract BondEscrow is DepositPausable, ReentrancyGuard {
     function releaseReservedPayout(
         uint256 claimId,
         uint256 replicationId
-    ) external onlyRole(ProtocolRoles.ESCROW_ADMIN_ROLE) nonReentrant {
+    ) external onlyRole(ProtocolRoles.BOUNTY_SETTLER_ROLE) nonReentrant {
         BountyReservation storage reservation = _reservations[claimId][replicationId];
         if (reservation.amount == 0) {
             revert BondEscrowReservationMissing(claimId, replicationId);
         }
         if (reservation.released) {
             revert BondEscrowAlreadyReleased(claimId, replicationId);
+        }
+        if (reservation.cancelled) {
+            revert BondEscrowAlreadyCancelled(claimId, replicationId);
+        }
+        if (!replicationRegistry.isReplicationResolved(replicationId)) {
+            revert BondEscrowUnresolvedReplication(replicationId);
         }
 
         reservation.released = true;
@@ -147,47 +200,95 @@ contract BondEscrow is DepositPausable, ReentrancyGuard {
         );
     }
 
-    /// @notice Slashes author bond value to a protocol-designated recipient.
-    /// @dev Trust assumption: `ESCROW_ADMIN_ROLE` can move any tracked bond balance to any
-    /// recipient. This role must be held by the protocol timelock (or an equivalently
-    /// constrained executor), never by a discretionary EOA.
-    function slashAuthorBond(
+    /// @notice Cancels an unreleased reservation and returns the amount to the claim bounty pool.
+    /// @dev Cancellation is terminal for the claim/replication pair and does not transfer value.
+    function cancelReservedPayout(
         uint256 claimId,
-        uint256 amount,
-        address recipient
-    ) external onlyRole(ProtocolRoles.ESCROW_ADMIN_ROLE) nonReentrant {
-        uint256 availableBond = authorBondBalances[claimId];
-        if (amount == 0) {
-            revert BondEscrowInvalidAmount(amount);
+        uint256 replicationId
+    ) external onlyRole(ProtocolRoles.ESCROW_ADMIN_ROLE) {
+        BountyReservation storage reservation = _reservations[claimId][replicationId];
+        if (reservation.amount == 0) {
+            revert BondEscrowReservationMissing(claimId, replicationId);
         }
-        _requireValidRecipient(recipient);
-        if (availableBond < amount) {
-            revert BondEscrowInsufficientAuthorBond(claimId, amount, availableBond);
+        if (reservation.released) {
+            revert BondEscrowAlreadyReleased(claimId, replicationId);
+        }
+        if (reservation.cancelled) {
+            revert BondEscrowAlreadyCancelled(claimId, replicationId);
         }
 
-        authorBondBalances[claimId] = availableBond - amount;
-        _safeTransferValue(recipient, amount);
-        emit AuthorBondSlashed(claimId, recipient, amount);
+        reservation.cancelled = true;
+        reservedBountyBalances[claimId] -= reservation.amount;
+        emit BountyPayoutCancelled(
+            claimId,
+            replicationId,
+            reservation.recipient,
+            reservation.amount,
+            msg.sender
+        );
     }
 
-    /// @notice Refunds author bond value to an approved recipient.
-    function refundAuthorBond(
+    /// @notice Slashes author bond value to the immutable protocol treasury.
+    /// @dev `ESCROW_ADMIN_ROLE` must be held by the protocol timelock (or an equivalently
+    /// constrained executor), never by a discretionary EOA. The caller cannot redirect value.
+    function slashAuthorBond(
         uint256 claimId,
-        uint256 amount,
-        address recipient
+        uint256 amount
     ) external onlyRole(ProtocolRoles.ESCROW_ADMIN_ROLE) nonReentrant {
         uint256 availableBond = authorBondBalances[claimId];
         if (amount == 0) {
             revert BondEscrowInvalidAmount(amount);
         }
-        _requireValidRecipient(recipient);
         if (availableBond < amount) {
             revert BondEscrowInsufficientAuthorBond(claimId, amount, availableBond);
         }
 
         authorBondBalances[claimId] = availableBond - amount;
+        _safeTransferValue(slashRecipient, amount);
+        emit AuthorBondSlashed(claimId, slashRecipient, amount);
+    }
+
+    /// @notice Credits refundable author bond value to the claim's recorded author.
+    /// @dev The timelocked administrator chooses only the claim and amount. The author chooses the
+    /// eventual recipient through `withdrawAuthorBondRefund`, so a reverting author contract
+    /// cannot permanently block the governance action or redirect another author's refund.
+    function refundAuthorBond(
+        uint256 claimId,
+        uint256 amount
+    ) external onlyRole(ProtocolRoles.ESCROW_ADMIN_ROLE) {
+        uint256 availableBond = authorBondBalances[claimId];
+        if (amount == 0) {
+            revert BondEscrowInvalidAmount(amount);
+        }
+        address author = claimRegistry.getClaimAuthor(claimId);
+        if (availableBond < amount) {
+            revert BondEscrowInsufficientAuthorBond(claimId, amount, availableBond);
+        }
+
+        authorBondBalances[claimId] = availableBond - amount;
+        authorRefundCredits[author] += amount;
+        emit AuthorBondRefundCredited(claimId, author, amount);
+    }
+
+    /// @notice Withdraws the caller's credited author-bond refund to a chosen valid recipient.
+    /// @dev Uses checks-effects-interactions and a reentrancy guard. No administrator can choose
+    /// or override the recipient.
+    function withdrawAuthorBondRefund(
+        uint256 amount,
+        address payable recipient
+    ) external nonReentrant {
+        if (amount == 0) {
+            revert BondEscrowInvalidAmount(amount);
+        }
+        _requireValidRecipient(recipient);
+        uint256 availableCredit = authorRefundCredits[msg.sender];
+        if (availableCredit < amount) {
+            revert BondEscrowInsufficientAuthorRefundCredit(msg.sender, amount, availableCredit);
+        }
+
+        authorRefundCredits[msg.sender] = availableCredit - amount;
         _safeTransferValue(recipient, amount);
-        emit AuthorBondRefunded(claimId, recipient, amount);
+        emit AuthorBondRefundWithdrawn(msg.sender, recipient, amount);
     }
 
     function getReservation(

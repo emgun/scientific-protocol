@@ -25,12 +25,24 @@ export type DeploymentAddresses = {
   wetLabModule: string;
 };
 
+export type DeploymentOperators = {
+  deployer: string;
+  claimSubmitter: string;
+  replicationSubmitter: string;
+  resolverOperator: string;
+  checkpointPublisher: string;
+};
+
 export type DeploymentFile = {
   network: string;
   chainId: number;
   deploymentBlock: number;
   deployedAt: string;
   addresses: DeploymentAddresses;
+  operators: DeploymentOperators;
+  parameters: {
+    minimumAuthorBondWei: string;
+  };
 };
 
 export const DEFAULT_DEPLOYMENT_PATH = path.resolve(process.cwd(), "ops", "local.addresses.json");
@@ -102,6 +114,14 @@ const DEPLOYMENT_ADDRESS_KEYS = [
   "wetLabModule",
 ] as const satisfies readonly (keyof DeploymentAddresses)[];
 
+const DEPLOYMENT_OPERATOR_KEYS = [
+  "deployer",
+  "claimSubmitter",
+  "replicationSubmitter",
+  "resolverOperator",
+  "checkpointPublisher",
+] as const satisfies readonly (keyof DeploymentOperators)[];
+
 function recordLike(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -145,11 +165,35 @@ function validateDeploymentFile(value: unknown, source: string): DeploymentFile 
   if (!addresses) {
     throw new Error(`deployment file from ${source} is missing addresses`);
   }
+  const parameters = recordLike(record.parameters);
+  if (!parameters) {
+    throw new Error(`deployment file from ${source} is missing parameters`);
+  }
+  const operators = recordLike(record.operators);
+  if (!operators) {
+    throw new Error(`deployment file from ${source} is missing operators`);
+  }
+  const minimumAuthorBondWei = requireString(parameters, "minimumAuthorBondWei", source);
+  if (!/^\d+$/u.test(minimumAuthorBondWei)) {
+    throw new Error(`deployment file from ${source} has invalid minimumAuthorBondWei`);
+  }
   for (const key of DEPLOYMENT_ADDRESS_KEYS) {
     const address = requireString(addresses, key, source);
     if (!isAddress(address)) {
       throw new Error(`deployment file from ${source} has invalid address for ${key}`);
     }
+  }
+  for (const key of DEPLOYMENT_OPERATOR_KEYS) {
+    const address = requireString(operators, key, source);
+    if (!isAddress(address)) {
+      throw new Error(`deployment file from ${source} has invalid operator address for ${key}`);
+    }
+  }
+  const operatorAddresses = DEPLOYMENT_OPERATOR_KEYS.map((key) =>
+    (operators[key] as string).toLowerCase(),
+  );
+  if (new Set(operatorAddresses).size !== operatorAddresses.length) {
+    throw new Error(`deployment file from ${source} has duplicate operator addresses`);
   }
 
   return {
@@ -160,6 +204,10 @@ function validateDeploymentFile(value: unknown, source: string): DeploymentFile 
     deployedAt: requireTimestamp(record, "deployedAt", source),
     deploymentBlock: requireNonNegativeInteger(record, "deploymentBlock", source),
     network: requireString(record, "network", source),
+    operators: Object.fromEntries(
+      DEPLOYMENT_OPERATOR_KEYS.map((key) => [key, operators[key] as string]),
+    ) as DeploymentOperators,
+    parameters: { minimumAuthorBondWei },
   };
 }
 
@@ -230,7 +278,13 @@ export async function saveDeploymentFile(
       metadata: {
         chainId: String(deployment.chainId),
         deploymentBlock: String(deployment.deploymentBlock),
+        minimumAuthorBondWei: deployment.parameters.minimumAuthorBondWei,
         network: deployment.network,
+        deployer: deployment.operators.deployer,
+        claimSubmitter: deployment.operators.claimSubmitter,
+        replicationSubmitter: deployment.operators.replicationSubmitter,
+        resolverOperator: deployment.operators.resolverOperator,
+        checkpointPublisher: deployment.operators.checkpointPublisher,
       },
     });
     return;

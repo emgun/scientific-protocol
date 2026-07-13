@@ -1,11 +1,13 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
+import { pathToFileURL } from "node:url";
 import { expect } from "chai";
 import { keccak256, toUtf8Bytes } from "ethers";
 import {
   isCliEntrypoint,
+  isMainModule,
   parseCliArgs,
   parseEnumValue,
   parseHttpUrlValue,
@@ -259,6 +261,19 @@ describe("src/shared/cli.ts", () => {
         "script/deploy-protocol.ts",
       ]),
     ).to.equal(true);
+  });
+
+  it("recognizes an installed package bin symlink as the main module", () => {
+    const tempRoot = mkdtempSync(path.join(tmpdir(), "scientific-protocol-bin-"));
+    const modulePath = path.join(tempRoot, "cli.js");
+    const binPath = path.join(tempRoot, "scientific-protocol-service");
+    try {
+      writeFileSync(modulePath, "#!/usr/bin/env node\n");
+      symlinkSync(modulePath, binPath);
+      expect(isMainModule(pathToFileURL(modulePath).href, ["node", binPath])).to.equal(true);
+    } finally {
+      rmSync(tempRoot, { force: true, recursive: true });
+    }
   });
 
   it("reports loop errors without throwing a stack object", () => {

@@ -73,12 +73,21 @@ abstract contract ProtocolDeployer is Test {
             address(protocolParameters)
         );
         artifactRegistry = new ArtifactRegistry(address(claimRegistry));
-        bondEscrow = new BondEscrow(address(accessController), address(claimRegistry));
         agentRegistry = new AgentRegistry(address(accessController));
         replicationRegistry = new ReplicationRegistry(
             address(accessController),
             address(claimRegistry),
             address(agentRegistry)
+        );
+        bondEscrow = new BondEscrow(
+            address(accessController),
+            address(claimRegistry),
+            address(replicationRegistry),
+            treasury
+        );
+        claimRegistry.configureProtocolDependencies(
+            address(bondEscrow),
+            address(replicationRegistry)
         );
         checkpointRegistry = new ReputationCheckpointRegistry(
             address(accessController),
@@ -136,6 +145,11 @@ abstract contract ProtocolDeployer is Test {
             address(0)
         );
 
+        if (authorBondAmount != 0) {
+            vm.prank(author);
+            bondEscrow.depositAuthorBond{value: authorBondAmount}(claimId);
+        }
+
         vm.prank(admin);
         claimRegistry.setClaimStatus(claimId, ProtocolTypes.ClaimStatus.Published);
     }
@@ -146,6 +160,7 @@ abstract contract ProtocolDeployer is Test {
         accessController.grantRole(ProtocolRoles.CHECKPOINT_PUBLISHER_ROLE, account);
         accessController.grantRole(ProtocolRoles.MODULE_ADMIN_ROLE, account);
         accessController.grantRole(ProtocolRoles.ESCROW_ADMIN_ROLE, account);
+        accessController.grantRole(ProtocolRoles.BOUNTY_SETTLER_ROLE, account);
         accessController.grantRole(ProtocolRoles.AGENT_BUDGET_MANAGER_ROLE, account);
         accessController.grantRole(ProtocolRoles.MARKET_SETTLER_ROLE, account);
         accessController.grantRole(ProtocolRoles.COURT_ROLE, account);

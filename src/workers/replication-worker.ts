@@ -32,6 +32,11 @@ export async function processReplicationJob(
   submissionTxHash?: string | null;
   workerId: string;
 }> {
+  if (env.SP_REFERENCE_CANARY_MODE !== "true") {
+    throw new Error(
+      "reference replication worker is disabled; set SP_REFERENCE_CANARY_MODE=true only for an explicit non-authoritative canary",
+    );
+  }
   const databaseUrl = getDatabaseUrl(env);
   const workerId =
     readOptionalTrimmedEnv(env, "SP_REPLICATION_WORKER_ID") ?? "local-replication-worker";

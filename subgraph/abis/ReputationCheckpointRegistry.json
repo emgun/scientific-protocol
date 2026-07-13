@@ -1,0 +1,371 @@
+[
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "accessController_",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "claimRegistry_",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "agentRegistry_",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "resolutionModuleRegistry_",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "constructor"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "role",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "address",
+        "name": "account",
+        "type": "address"
+      }
+    ],
+    "name": "AccessManagedMissingRole",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "AccessManagedZeroAddress",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "enum ProtocolTypes.CheckpointSubjectType",
+        "name": "subjectType",
+        "type": "uint8"
+      }
+    ],
+    "name": "ReputationCheckpointRegistryInvalidSubject",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "agentId",
+        "type": "uint256"
+      }
+    ],
+    "name": "ReputationCheckpointRegistryUnknownAgent",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "checkpointId",
+        "type": "uint256"
+      }
+    ],
+    "name": "ReputationCheckpointRegistryUnknownCheckpoint",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "claimId",
+        "type": "uint256"
+      }
+    ],
+    "name": "ReputationCheckpointRegistryUnknownClaim",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "module",
+        "type": "address"
+      }
+    ],
+    "name": "ReputationCheckpointRegistryUnknownModule",
+    "type": "error"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "checkpointId",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "uint64",
+        "name": "domainId",
+        "type": "uint64"
+      },
+      {
+        "indexed": true,
+        "internalType": "enum ProtocolTypes.CheckpointSubjectType",
+        "name": "subjectType",
+        "type": "uint8"
+      },
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "subjectActor",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "subjectClaimId",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "subjectAgentId",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "subjectModule",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "bytes32",
+        "name": "scoreVectorHash",
+        "type": "bytes32"
+      },
+      {
+        "indexed": false,
+        "internalType": "bytes32",
+        "name": "payloadHash",
+        "type": "bytes32"
+      },
+      {
+        "indexed": false,
+        "internalType": "string",
+        "name": "uri",
+        "type": "string"
+      }
+    ],
+    "name": "ReputationCheckpointPublished",
+    "type": "event"
+  },
+  {
+    "inputs": [],
+    "name": "accessController",
+    "outputs": [
+      {
+        "internalType": "contract IAccessController",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "agentRegistry",
+    "outputs": [
+      {
+        "internalType": "contract IAgentRegistry",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "claimRegistry",
+    "outputs": [
+      {
+        "internalType": "contract IClaimRegistry",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "checkpointId",
+        "type": "uint256"
+      }
+    ],
+    "name": "getCheckpoint",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "uint256",
+            "name": "checkpointId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "domainId",
+            "type": "uint64"
+          },
+          {
+            "internalType": "enum ProtocolTypes.CheckpointSubjectType",
+            "name": "subjectType",
+            "type": "uint8"
+          },
+          {
+            "internalType": "address",
+            "name": "subjectActor",
+            "type": "address"
+          },
+          {
+            "internalType": "uint256",
+            "name": "subjectClaimId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "subjectAgentId",
+            "type": "uint256"
+          },
+          {
+            "internalType": "address",
+            "name": "subjectModule",
+            "type": "address"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "scoreVectorHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "payloadHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "string",
+            "name": "uri",
+            "type": "string"
+          },
+          {
+            "internalType": "uint256",
+            "name": "publishedAt",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct ReputationCheckpointRegistry.CheckpointRecord",
+        "name": "",
+        "type": "tuple"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "nextCheckpointId",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint64",
+        "name": "domainId",
+        "type": "uint64"
+      },
+      {
+        "internalType": "enum ProtocolTypes.CheckpointSubjectType",
+        "name": "subjectType",
+        "type": "uint8"
+      },
+      {
+        "internalType": "address",
+        "name": "subjectActor",
+        "type": "address"
+      },
+      {
+        "internalType": "uint256",
+        "name": "subjectClaimId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "subjectAgentId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "address",
+        "name": "subjectModule",
+        "type": "address"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "scoreVectorHash",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "payloadHash",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "string",
+        "name": "uri",
+        "type": "string"
+      }
+    ],
+    "name": "publishCheckpoint",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "checkpointId",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "resolutionModuleRegistry",
+    "outputs": [
+      {
+        "internalType": "contract IResolutionModuleRegistry",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  }
+]

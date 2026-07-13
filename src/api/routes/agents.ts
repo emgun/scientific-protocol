@@ -24,8 +24,8 @@ import {
   parseWebhookSubscriptionCreatePayload,
 } from "../params.js";
 import {
-  consumeDuplicateCooldown,
-  recordDuplicateCooldown,
+  consumeConfiguredRateLimit,
+  requestClientKey,
   sourceDuplicateCooldownKey,
 } from "../rate-limit.js";
 import {
@@ -45,6 +45,7 @@ export async function handleAgentActionRoutes(context: RouteContext): Promise<bo
     env,
     pool,
     rateLimitConfig,
+    rateLimitBackend,
     request,
     response,
     sourceDuplicateCooldownBuckets,
@@ -880,18 +881,41 @@ export async function handleAgentActionRoutes(context: RouteContext): Promise<bo
     try {
       const payload = parseArtifactDraftPayload(authenticated.envelope.payload);
       const canonical = canonicalizeSourceDraft(payload);
+      for (const bucketKey of [
+        `agentSourceSubmission:client:${requestClientKey(request, rateLimitConfig.trustProxy)}`,
+        `agentSourceSubmission:actor:${authenticated.envelope.actorAddress.toLowerCase()}:agent:${authenticated.envelope.agentId}`,
+      ]) {
+        const globalThrottle = await consumeConfiguredRateLimit({
+          backend: rateLimitBackend,
+          bucketKey,
+          buckets: sourceDuplicateCooldownBuckets,
+          pool,
+          response,
+          rule: rateLimitConfig.agentSourceSubmission,
+        });
+        if (!globalThrottle.allowed) {
+          json(response, 429, {
+            error: "rate_limited",
+            retryAfterSeconds: globalThrottle.retryAfterSeconds,
+            scope: "agentSourceSubmission",
+          });
+          return true;
+        }
+      }
       const duplicateCooldownBucketKey = sourceDuplicateCooldownKey(
         "agentSourceSubmission",
         canonical.canonicalSourceKey,
         authenticated.envelope.actorAddress,
         authenticated.envelope.agentId,
       );
-      const throttle = consumeDuplicateCooldown(
+      const throttle = await consumeConfiguredRateLimit({
+        backend: rateLimitBackend,
+        bucketKey: duplicateCooldownBucketKey,
+        buckets: sourceDuplicateCooldownBuckets,
+        pool,
         response,
-        sourceDuplicateCooldownBuckets,
-        duplicateCooldownBucketKey,
-        rateLimitConfig.agentSourceSubmission,
-      );
+        rule: rateLimitConfig.agentSourceSubmission,
+      });
       if (!throttle.allowed) {
         await dependencies.insertAgentRequest(pool, {
           actionType: authenticated.envelope.actionType,
@@ -917,13 +941,6 @@ export async function handleAgentActionRoutes(context: RouteContext): Promise<bo
         submittedByActor: authenticated.envelope.actorAddress,
         submittedByAgentId: authenticated.envelope.agentId,
       });
-      if (result.submissionOutcome === "duplicate") {
-        recordDuplicateCooldown(
-          sourceDuplicateCooldownBuckets,
-          duplicateCooldownBucketKey,
-          rateLimitConfig.agentSourceSubmission,
-        );
-      }
       const recorded = await dependencies.insertAgentRequest(pool, {
         actionType: authenticated.envelope.actionType,
         actorAddress: authenticated.envelope.actorAddress,

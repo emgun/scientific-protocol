@@ -1,0 +1,19 @@
+{
+  "health": {
+    "ok": true,
+    "counts": { "claims": 1, "replications": 1 },
+    "sync": { "status": "ready" }
+  },
+  "claims": {
+    "items": [{ "claimId": "7", "status": 2, "domainId": 1, "metadataHash": "0xabc" }],
+    "limit": 5,
+    "offset": 0,
+    "total": 1
+  },
+  "workItems": {
+    "items": [{ "workItemId": "review:7:1", "claimId": "7", "kind": "review", "claimable": true }],
+    "limit": 5,
+    "offset": 0,
+    "total": 1
+  }
+}

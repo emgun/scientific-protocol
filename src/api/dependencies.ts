@@ -118,27 +118,38 @@ import {
 import { getProvider, getRpcUrl } from "../shared/contracts.js";
 import { readOperatorRequest, readOperatorRequestsPage } from "../shared/operator-requests.js";
 import {
+  assertPublicWriteRequestExecution,
   insertPublicWriteRequest,
   markPublicWriteRequestAccepted,
+  markPublicWriteRequestPending,
   markPublicWriteRequestRejected,
+  readPublicWriteRequestByHash,
+  releasePublicWriteRequestExecution,
+  renewPublicWriteRequestExecution,
+  reservePublicWriteRequestExecution,
 } from "../shared/public-write-requests.js";
 import { readEnvValue } from "../shared/secrets.js";
 import {
   confirmSourcePublication,
   rejectSourcePublication,
 } from "../sources/manual-publication.js";
-import { ingestSource } from "../sources/service.js";
+import { ingestSource, reconstructSourceSubmission } from "../sources/service.js";
 import {
   readSourceByCanonicalKey,
   readSourceExtractionCandidates,
   readSourceExtractionCandidatesForSources,
   readSourcePublicationDecisionsPage,
   readSourceRecord,
+  readSourceSubmissionRecordByRequestHash,
   readSourceSubmissionRecordsPage,
   readSourcesPage,
   upsertSourceRecord,
 } from "../sources/store.js";
-import { createProductionArtifactDraft, createProductionClaim } from "../submission/actions.js";
+import {
+  createProductionArtifactDraft,
+  createProductionClaim,
+  publishProductionClaim,
+} from "../submission/actions.js";
 import { accessControllerHasRole } from "./auth.js";
 
 export type ApiDependencies = {
@@ -151,7 +162,9 @@ export type ApiDependencies = {
   confirmSourcePublication: typeof confirmSourcePublication;
   createProductionArtifactDraft: typeof createProductionArtifactDraft;
   createProductionClaim: typeof createProductionClaim;
+  publishProductionClaim: typeof publishProductionClaim;
   ingestSource: typeof ingestSource;
+  reconstructSourceSubmission: typeof reconstructSourceSubmission;
   createDemoArtifactDraft: typeof createDemoArtifactDraft;
   createArtifactMaintenanceTask: typeof createArtifactMaintenanceTask;
   createAgentWebhookSubscription: typeof createAgentWebhookSubscription;
@@ -169,7 +182,13 @@ export type ApiDependencies = {
   insertPublicWriteRequest: typeof insertPublicWriteRequest;
   listFeaturedDemoScenarios: typeof listFeaturedDemoScenarios;
   markPublicWriteRequestAccepted: typeof markPublicWriteRequestAccepted;
+  markPublicWriteRequestPending: typeof markPublicWriteRequestPending;
   markPublicWriteRequestRejected: typeof markPublicWriteRequestRejected;
+  readPublicWriteRequestByHash: typeof readPublicWriteRequestByHash;
+  releasePublicWriteRequestExecution: typeof releasePublicWriteRequestExecution;
+  renewPublicWriteRequestExecution: typeof renewPublicWriteRequestExecution;
+  reservePublicWriteRequestExecution: typeof reservePublicWriteRequestExecution;
+  assertPublicWriteRequestExecution: typeof assertPublicWriteRequestExecution;
   openDefaultReviewTasksForClaim: typeof openDefaultReviewTasksForClaim;
   openDemoReplicationJob: typeof openDemoReplicationJob;
   processDemoReplicationJob: typeof processDemoReplicationJob;
@@ -253,6 +272,7 @@ export type ApiDependencies = {
   readSourceByCanonicalKey: typeof readSourceByCanonicalKey;
   readSourcePublicationDecisionsPage: typeof readSourcePublicationDecisionsPage;
   readSourceRecord: typeof readSourceRecord;
+  readSourceSubmissionRecordByRequestHash: typeof readSourceSubmissionRecordByRequestHash;
   readSourceSubmissionRecordsPage: typeof readSourceSubmissionRecordsPage;
   readSourcesPage: typeof readSourcesPage;
   readResolutionRun: typeof readResolutionRun;
@@ -314,6 +334,7 @@ export const defaultDependencies: ApiDependencies = {
   createProductionArtifactDraft,
   createProductionClaim,
   ingestSource,
+  reconstructSourceSubmission,
   createDemoArtifactDraft,
   createArtifactMaintenanceTask,
   createAgentWebhookSubscription,
@@ -331,10 +352,17 @@ export const defaultDependencies: ApiDependencies = {
   insertPublicWriteRequest,
   listFeaturedDemoScenarios,
   markPublicWriteRequestAccepted,
+  markPublicWriteRequestPending,
   markPublicWriteRequestRejected,
+  readPublicWriteRequestByHash,
+  releasePublicWriteRequestExecution,
+  renewPublicWriteRequestExecution,
+  reservePublicWriteRequestExecution,
+  assertPublicWriteRequestExecution,
   openDefaultReviewTasksForClaim,
   openDemoReplicationJob,
   processDemoReplicationJob,
+  publishProductionClaim,
   recomputeDemoDomain,
   reseedOperationalDemoScenario,
   resetSandboxDemo,
@@ -415,6 +443,7 @@ export const defaultDependencies: ApiDependencies = {
   readSourceByCanonicalKey,
   readSourcePublicationDecisionsPage,
   readSourceRecord,
+  readSourceSubmissionRecordByRequestHash,
   readSourceSubmissionRecordsPage,
   readSourcesPage,
   readResolutionRun,

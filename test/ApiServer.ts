@@ -80,6 +80,7 @@ const TEST_ROLE_HASH = {
 function createDependencyOverrides(
   overrides: Partial<ApiDependencies> = {},
 ): Partial<ApiDependencies> {
+  const publicWriteRequests = new Map<string, PublicWriteRequestView>();
   const replicationJobs: ReplicationJobView[] = [
     {
       jobId: "1",
@@ -370,6 +371,7 @@ function createDependencyOverrides(
       cutoffBlock: 42,
       cursorBlock: 41,
       payloadHash: "0xa001",
+      policyVersion: "reputation-v2-direction-neutral-work",
       artifactKey: "reputation-payload-a001",
       entryCount: 1,
       createdAt: "2026-03-11T00:06:00.000Z",
@@ -1024,6 +1026,8 @@ function createDependencyOverrides(
         settled: true,
         direction: 1,
         confidenceBps: 8000,
+        effectiveDecisionIdAtCommit: "6",
+        resolutionDecisionId: "7",
         finalStatus: 1,
         matched: true,
         payoutAmount: "12",
@@ -1583,38 +1587,59 @@ function createDependencyOverrides(
         createdAt: "2026-03-11T00:11:40.000Z",
         updatedAt: "2026-03-11T00:11:40.000Z",
       };
+      publicWriteRequests.set(request.requestHash, request);
       return request;
     },
-    markPublicWriteRequestAccepted: async (_pool, requestId, outcomeDetail) => ({
-      requestId,
-      actionType: "claim_create" as const,
-      actorAddress: "0x0000000000000000000000000000000000000001",
-      chainId: 31337,
-      requestNonce: "nonce-1",
-      scopeKey: "claim:1",
-      requestHash: "0xwritehash",
-      signature: "0xsigned",
-      payload: {},
-      status: "accepted" as const,
-      outcomeDetail: outcomeDetail ?? null,
-      createdAt: "2026-03-11T00:11:40.000Z",
-      updatedAt: "2026-03-11T00:11:41.000Z",
-    }),
-    markPublicWriteRequestRejected: async (_pool, requestId, outcomeDetail) => ({
-      requestId,
-      actionType: "claim_create" as const,
-      actorAddress: "0x0000000000000000000000000000000000000001",
-      chainId: 31337,
-      requestNonce: "nonce-1",
-      scopeKey: "claim:1",
-      requestHash: "0xwritehash",
-      signature: "0xsigned",
-      payload: {},
-      status: "rejected" as const,
-      outcomeDetail,
-      createdAt: "2026-03-11T00:11:40.000Z",
-      updatedAt: "2026-03-11T00:11:41.000Z",
-    }),
+    readPublicWriteRequestByHash: async (_pool, requestHash) =>
+      publicWriteRequests.get(requestHash),
+    reservePublicWriteRequestExecution: async () => true,
+    renewPublicWriteRequestExecution: async () => true,
+    assertPublicWriteRequestExecution: async () => {},
+    releasePublicWriteRequestExecution: async () => {},
+    markPublicWriteRequestAccepted: async (_pool, requestId, outcomeDetail) => {
+      const existing = [...publicWriteRequests.values()].find(
+        (request) => request.requestId === requestId,
+      );
+      const updated: PublicWriteRequestView = {
+        ...(existing ?? {
+          requestId,
+          actionType: "claim_create",
+          actorAddress: "0x0000000000000000000000000000000000000001",
+          chainId: 31337,
+          requestNonce: "nonce-1",
+          scopeKey: "claim:1",
+          requestHash: "0xwritehash",
+          signature: "0xsigned",
+          payload: {},
+          createdAt: "2026-03-11T00:11:40.000Z",
+        }),
+        status: "accepted",
+        outcomeDetail: outcomeDetail ?? null,
+        updatedAt: "2026-03-11T00:11:41.000Z",
+      };
+      publicWriteRequests.set(updated.requestHash, updated);
+      return updated;
+    },
+    markPublicWriteRequestPending: async (_pool, requestId, outcomeDetail) => {
+      const existing = [...publicWriteRequests.values()].find(
+        (request) => request.requestId === requestId,
+      );
+      if (!existing) throw new Error("public_write_request_not_found_after_pending_update");
+      if (existing.status === "accepted") return existing;
+      const updated = { ...existing, status: "pending" as const, outcomeDetail };
+      publicWriteRequests.set(updated.requestHash, updated);
+      return updated;
+    },
+    markPublicWriteRequestRejected: async (_pool, requestId, outcomeDetail) => {
+      const existing = [...publicWriteRequests.values()].find(
+        (request) => request.requestId === requestId,
+      );
+      if (!existing) throw new Error("public_write_request_not_found_after_reject");
+      if (existing.status === "accepted") return existing;
+      const updated = { ...existing, status: "rejected" as const, outcomeDetail };
+      publicWriteRequests.set(updated.requestHash, updated);
+      return updated;
+    },
     createAgentWebhookSubscription: async (_pool, input) => {
       const subscription: AgentWebhookSubscriptionSecretView = {
         subscriptionId: String(agentWebhookSubscriptions.length + 1),
@@ -2480,7 +2505,10 @@ async function startServer(
       : createDependencyOverrides(dependencies),
     databaseUrl: "postgresql://test@127.0.0.1:5432/scientific_protocol_test",
     deploymentPath: options.deploymentPath ?? TEST_DEPLOYMENT_PATH,
-    env: options.env,
+    env:
+      options.env === undefined
+        ? { ...process.env, SP_SERVICE_MODE: "write-enabled" }
+        : { SP_SERVICE_MODE: "write-enabled", ...options.env },
     rateLimitConfig: options.rateLimitConfig,
   });
 
@@ -2530,6 +2558,102 @@ function localOperatorWallet(accountIndex: number): Wallet {
 }
 
 describe("ApiServer", () => {
+  it("exposes liveness provenance without database, RPC, or signer access", async () => {
+    const server = await startServer(
+      {},
+      {
+        env: {
+          SP_SERVICE_BUILD_DATE: "2026-07-12T00:00:00Z",
+          SP_SERVICE_MODE: "read-only",
+          SP_SERVICE_REVISION: "abc123",
+          SP_SERVICE_VERSION: "0.3.0",
+        },
+      },
+    );
+    try {
+      const response = await fetch(`${server.baseUrl}/livez`);
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), {
+        ok: true,
+        service: {
+          mode: "read-only",
+          provenance: {
+            buildDate: "2026-07-12T00:00:00Z",
+            imageRevision: "abc123",
+            version: "0.3.0",
+          },
+          writesEnabled: false,
+        },
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("reports migration-aware readiness without disclosing database errors", async () => {
+    const readyPool = {
+      query: async () => ({ rows: [{ schema_migrations: "schema_migrations" }] }),
+    } as unknown as Pool;
+    const ready = await startServer({}, { pool: readyPool });
+    try {
+      const response = await fetch(`${ready.baseUrl}/readyz`);
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), {
+        ok: true,
+        readModel: "available",
+        serviceMode: "write-enabled",
+      });
+    } finally {
+      await ready.close();
+    }
+
+    const unavailablePool = {
+      query: async () => {
+        throw new Error("private database hostname");
+      },
+    } as unknown as Pool;
+    const unavailable = await startServer({}, { pool: unavailablePool });
+    try {
+      const response = await fetch(`${unavailable.baseUrl}/readyz`);
+      assert.equal(response.status, 503);
+      assert.deepEqual(await response.json(), {
+        error: "read_model_unavailable",
+        ok: false,
+      });
+    } finally {
+      await unavailable.close();
+    }
+  });
+
+  it("fails safe to a read-only gateway mode", async () => {
+    const server = await startServer({}, { env: { SP_SERVICE_MODE: "read-only" } });
+    try {
+      const response = await fetch(`${server.baseUrl}/sources`, { method: "POST" });
+      assert.equal(response.status, 405);
+      assert.equal(response.headers.get("allow"), "GET, HEAD, OPTIONS");
+      assert.deepEqual(await response.json(), {
+        error: "service_read_only",
+        serviceMode: "read-only",
+      });
+
+      const syncResponse = await fetch(`${server.baseUrl}/admin/sync`);
+      assert.equal(syncResponse.status, 405);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("rejects unknown service modes during server creation", async () => {
+    await assert.rejects(
+      createApiServer({
+        env: { SP_SERVICE_MODE: "unsafe" },
+        pool: {} as Pool,
+        runMigrations: false,
+      }),
+      /SP_SERVICE_MODE must be one of: read-only, write-enabled/,
+    );
+  });
+
   it("rejects invalid rate-limit boolean env values during server creation", async () => {
     await assert.rejects(
       startServer({}, { env: { SP_TRUST_PROXY: "sometimes" } }),
@@ -2741,23 +2865,14 @@ describe("ApiServer", () => {
     }
   });
 
-  it("returns sync summary counts from /admin/sync", async () => {
+  it("rejects unauthenticated POST /admin/sync", async () => {
     const { baseUrl, close } = await startServer();
 
     try {
       const response = await fetch(`${baseUrl}/admin/sync`, { method: "POST" });
-      expect(response.status).to.equal(200);
-
-      const payload = await response.json();
-      expect(payload.ok).to.equal(true);
-      expect(payload.latestBlock).to.equal(45);
-      expect(payload.claims).to.equal(1);
-      expect(payload.replications).to.equal(1);
-      expect(payload.checkpoints).to.equal(1);
-      expect(payload.agents).to.equal(1);
-      expect(payload.forecasts).to.equal(1);
-      expect(payload.challenges).to.equal(1);
-      expect(payload.appeals).to.equal(1);
+      expect(response.status).to.equal(405);
+      expect(response.headers.get("allow")).to.equal("GET");
+      expect(await response.json()).to.deep.equal({ error: "method_not_allowed" });
     } finally {
       await close();
     }
@@ -3029,14 +3144,19 @@ describe("ApiServer", () => {
   });
 
   it("maps sync lock contention to HTTP 409", async () => {
-    const { baseUrl, close } = await startServer({
-      syncReadModel: async () => {
-        throw new ReadModelSyncInProgressError();
+    const { baseUrl, close } = await startServer(
+      {
+        syncReadModel: async () => {
+          throw new ReadModelSyncInProgressError();
+        },
       },
-    });
+      { env: { CRON_SECRET: "cron-test-secret" } },
+    );
 
     try {
-      const response = await fetch(`${baseUrl}/admin/sync`, { method: "POST" });
+      const response = await fetch(`${baseUrl}/admin/sync`, {
+        headers: { authorization: "Bearer cron-test-secret" },
+      });
       expect(response.status).to.equal(409);
       expect(await response.json()).to.deep.equal({ error: "sync_in_progress" });
     } finally {
@@ -3266,6 +3386,8 @@ describe("ApiServer", () => {
       expect(payload.artifactRegistryAddress).to.match(/^0x[a-fA-F0-9]{40}$/);
       expect(payload.claimRegistryAddress).to.match(/^0x[a-fA-F0-9]{40}$/);
       expect(payload.bondEscrowAddress).to.match(/^0x[a-fA-F0-9]{40}$/);
+      expect(payload.authorBondWei).to.equal("5000000000000000");
+      expect(payload.minimumAuthorBondWei).to.equal(payload.authorBondWei);
       expect(payload.claimRewardVaultAddress).to.match(/^0x[a-fA-F0-9]{40}$/);
       expect(payload.operatorLifecycleAuth.canonicalMode).to.equal("wallet_signature");
       expect(payload.operatorLifecycleAuth.resolverRole).to.equal("RESOLVER_ROLE");
@@ -3452,11 +3574,11 @@ describe("ApiServer", () => {
           author: authorAddress,
           claimId: "23",
           job: null,
+          publicationStatus: "awaiting_author_bond" as const,
           submittedBy: "0x00000000000000000000000000000000000000aa",
           txHashes: {
             addArtifact: "0xartifact",
             createClaim: "0xcreate",
-            publishClaim: "0xpublish",
           },
         };
       },
@@ -3501,6 +3623,196 @@ describe("ApiServer", () => {
       expect(payload.requestId).to.equal("91");
       expect(payload.result.claimId).to.equal("23");
     } finally {
+      await close();
+    }
+  });
+
+  it("publishes a bonded draft through a second signed author request", async () => {
+    const wallet = Wallet.createRandom();
+    let received: { authorAddress: string; claimId: string } | null = null;
+    const { baseUrl, close } = await startServer({
+      publishProductionClaim: async (claimId, authorAddress) => {
+        received = { authorAddress, claimId };
+        return {
+          claimId,
+          publicationStatus: "published",
+          publishClaimTxHash: "0xpublish",
+          reconciled: false,
+        };
+      },
+    });
+    try {
+      const writeConfig = await fetch(`${baseUrl}/write-config`).then((response) =>
+        response.json(),
+      );
+      const signed = await buildSignedPublicWriteBody(wallet, {
+        actionType: "claim_publish",
+        actorAddress: wallet.address,
+        chainId: writeConfig.chainId,
+        issuedAt: new Date().toISOString(),
+        payload: {},
+        requestNonce: "claim-publish-23",
+        scopeKey: "claim:23",
+      });
+      const response = await fetch(`${baseUrl}/claims/23/publish`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(signed),
+      });
+      expect(response.status).to.equal(200);
+      expect(received).to.deep.equal({ authorAddress: wallet.address, claimId: "23" });
+      expect((await response.json()).result.publicationStatus).to.equal("published");
+    } finally {
+      await close();
+    }
+  });
+
+  it("reconciles an exact publication replay after the chain write outlives request acceptance", async () => {
+    const wallet = Wallet.createRandom();
+    let publishCalls = 0;
+    let acceptanceCalls = 0;
+    const { baseUrl, close } = await startServer({
+      publishProductionClaim: async (claimId) => {
+        publishCalls += 1;
+        return {
+          claimId,
+          publicationStatus: "published",
+          publishClaimTxHash: publishCalls === 1 ? "0xpublish" : null,
+          reconciled: publishCalls > 1,
+        };
+      },
+      markPublicWriteRequestAccepted: async (_pool, requestId, outcomeDetail) => {
+        acceptanceCalls += 1;
+        if (acceptanceCalls === 1) throw new Error("fault_after_chain_publish");
+        return {
+          requestId,
+          actionType: "claim_publish",
+          actorAddress: wallet.address.toLowerCase(),
+          chainId: 31337,
+          requestNonce: "claim-publish-replay",
+          scopeKey: "claim:23",
+          requestHash: "0xrequest",
+          signature: "0xsigned",
+          payload: {},
+          status: "accepted",
+          outcomeDetail: outcomeDetail ?? null,
+          createdAt: "2026-07-12T00:00:00.000Z",
+          updatedAt: "2026-07-12T00:00:01.000Z",
+        };
+      },
+    });
+    try {
+      const signed = await buildSignedPublicWriteBody(wallet, {
+        actionType: "claim_publish",
+        actorAddress: wallet.address,
+        chainId: 31337,
+        issuedAt: new Date().toISOString(),
+        payload: {},
+        requestNonce: "claim-publish-replay",
+        scopeKey: "claim:23",
+      });
+      const publish = () =>
+        fetch(`${baseUrl}/claims/23/publish`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(signed),
+        });
+      expect((await publish()).status).to.equal(500);
+      const replay = await publish();
+      expect(replay.status).to.equal(200);
+      const payload = await replay.json();
+      expect(payload.result).to.include({ publicationStatus: "published", reconciled: true });
+      expect(payload.result.publishClaimTxHash).to.equal(null);
+      expect(publishCalls).to.equal(2);
+      expect(acceptanceCalls).to.equal(2);
+    } finally {
+      await close();
+    }
+  });
+
+  it("serializes concurrent exact publication replays under one execution lease", async () => {
+    const wallet = Wallet.createRandom();
+    let leaseHeld = false;
+    let publishCalls = 0;
+    let acceptedStatus: string | null = null;
+    let releasePublish: (() => void) | null = null;
+    const publishStarted = new Promise<void>((resolve) => {
+      releasePublish = resolve;
+    });
+    let unblockPublish: (() => void) | null = null;
+    const publishBlocked = new Promise<void>((resolve) => {
+      unblockPublish = resolve;
+    });
+    const { baseUrl, close } = await startServer({
+      reservePublicWriteRequestExecution: async () => {
+        if (leaseHeld) return false;
+        leaseHeld = true;
+        return true;
+      },
+      renewPublicWriteRequestExecution: async () => leaseHeld,
+      assertPublicWriteRequestExecution: async () => {
+        if (!leaseHeld) throw new Error("public_write_request_execution_lease_lost");
+      },
+      releasePublicWriteRequestExecution: async () => {
+        leaseHeld = false;
+      },
+      publishProductionClaim: async (claimId) => {
+        publishCalls += 1;
+        releasePublish?.();
+        await publishBlocked;
+        return {
+          claimId,
+          publicationStatus: "published",
+          publishClaimTxHash: "0xpublish",
+          reconciled: false,
+        };
+      },
+      markPublicWriteRequestAccepted: async (_pool, requestId, outcomeDetail) => {
+        acceptedStatus = "accepted";
+        return {
+          requestId,
+          actionType: "claim_publish",
+          actorAddress: wallet.address.toLowerCase(),
+          chainId: 31337,
+          requestNonce: "claim-publish-concurrent",
+          scopeKey: "claim:23",
+          requestHash: "0xrequest",
+          signature: "0xsigned",
+          payload: {},
+          status: "accepted",
+          outcomeDetail: outcomeDetail ?? null,
+          createdAt: "2026-07-12T00:00:00.000Z",
+          updatedAt: "2026-07-12T00:00:01.000Z",
+        };
+      },
+    });
+    try {
+      const signed = await buildSignedPublicWriteBody(wallet, {
+        actionType: "claim_publish",
+        actorAddress: wallet.address,
+        chainId: 31337,
+        issuedAt: new Date().toISOString(),
+        payload: {},
+        requestNonce: "claim-publish-concurrent",
+        scopeKey: "claim:23",
+      });
+      const publish = () =>
+        fetch(`${baseUrl}/claims/23/publish`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(signed),
+        });
+      const winnerPromise = publish();
+      await publishStarted;
+      const concurrent = await publish();
+      expect(concurrent.status).to.equal(409);
+      expect(await concurrent.json()).to.deep.equal({ error: "public_write_request_in_progress" });
+      unblockPublish?.();
+      expect((await winnerPromise).status).to.equal(200);
+      expect(publishCalls).to.equal(1);
+      expect(acceptedStatus).to.equal("accepted");
+    } finally {
+      unblockPublish?.();
       await close();
     }
   });
@@ -4662,9 +4974,296 @@ describe("ApiServer", () => {
     }
   });
 
+  it("resumes an exact rejected source-submit replay while reapplying global throttles", async () => {
+    const wallet = Wallet.createRandom();
+    let attempts = 0;
+    const { baseUrl, close } = await startServer(
+      {
+        createProductionArtifactDraft: async () => {
+          attempts += 1;
+          if (attempts === 1) throw new Error("fault_after_request_insert");
+          return {
+            source: { sourceId: "7" },
+            submissionOutcome: "created",
+          } as never;
+        },
+      },
+      {
+        rateLimitConfig: {
+          sourceSubmission: { maxRequests: 2, windowMs: 60_000 },
+        } as PartialApiRateLimitConfig,
+      },
+    );
+    try {
+      const signed = await buildSignedPublicWriteBody(wallet, {
+        actionType: "source_submit",
+        actorAddress: wallet.address,
+        chainId: 31337,
+        issuedAt: new Date().toISOString(),
+        payload: { sourceType: "url", sourceUrl: "https://example.com/resumable.pdf" },
+        requestNonce: "source-resume-after-insert",
+        scopeKey: `submit:${wallet.address.toLowerCase()}`,
+      });
+      const submit = () =>
+        fetch(`${baseUrl}/sources`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(signed),
+        });
+      expect((await submit()).status).to.equal(500);
+      const replay = await submit();
+      expect(replay.status).to.equal(200);
+      expect((await replay.json()).result.source.sourceId).to.equal("7");
+      expect(attempts).to.equal(2);
+      const differentRequest = await buildSignedPublicWriteBody(wallet, {
+        actionType: "source_submit",
+        actorAddress: wallet.address,
+        chainId: 31337,
+        issuedAt: new Date().toISOString(),
+        payload: { sourceType: "url", sourceUrl: "https://example.com/after-replay.pdf" },
+        requestNonce: "source-after-rejected-replay",
+        scopeKey: `submit:${wallet.address.toLowerCase()}`,
+      });
+      const limited = await fetch(`${baseUrl}/sources`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(differentRequest),
+      });
+      expect(limited.status).to.equal(429);
+    } finally {
+      await close();
+    }
+  });
+
+  it("serializes concurrent exact source-submit replays under one execution lease", async () => {
+    const wallet = Wallet.createRandom();
+    let leaseHeld = false;
+    let createCalls = 0;
+    let signalStarted: (() => void) | null = null;
+    const started = new Promise<void>((resolve) => {
+      signalStarted = resolve;
+    });
+    let unblock: (() => void) | null = null;
+    const blocked = new Promise<void>((resolve) => {
+      unblock = resolve;
+    });
+    const { baseUrl, close } = await startServer({
+      reservePublicWriteRequestExecution: async () => {
+        if (leaseHeld) return false;
+        leaseHeld = true;
+        return true;
+      },
+      renewPublicWriteRequestExecution: async () => leaseHeld,
+      assertPublicWriteRequestExecution: async () => {
+        if (!leaseHeld) throw new Error("public_write_request_execution_lease_lost");
+      },
+      releasePublicWriteRequestExecution: async () => {
+        leaseHeld = false;
+      },
+      createProductionArtifactDraft: async () => {
+        createCalls += 1;
+        signalStarted?.();
+        await blocked;
+        return { source: { sourceId: "17" }, submissionOutcome: "created" } as never;
+      },
+    });
+    try {
+      const signed = await buildSignedPublicWriteBody(wallet, {
+        actionType: "source_submit",
+        actorAddress: wallet.address,
+        chainId: 31337,
+        issuedAt: new Date().toISOString(),
+        payload: { sourceType: "url", sourceUrl: "https://example.com/concurrent.pdf" },
+        requestNonce: "source-concurrent-replay",
+        scopeKey: `submit:${wallet.address.toLowerCase()}`,
+      });
+      const submit = () =>
+        fetch(`${baseUrl}/sources`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(signed),
+        });
+      const first = submit();
+      await started;
+      const concurrent = await submit();
+      expect(concurrent.status).to.equal(409);
+      expect((await concurrent.json()).error).to.equal("public_write_request_in_progress");
+      expect(createCalls).to.equal(1);
+      unblock?.();
+      expect((await first).status).to.equal(200);
+      expect(leaseHeld).to.equal(false);
+    } finally {
+      unblock?.();
+      await close();
+    }
+  });
+
+  it("keeps a proven accepted source replay from rewriting its accepted request", async () => {
+    const wallet = Wallet.createRandom();
+    let recorded: PublicWriteRequestView | undefined;
+    let acceptanceWrites = 0;
+    let reconstructionCalls = 0;
+    let ingestCalls = 0;
+    const { baseUrl, close } = await startServer({
+      readPublicWriteRequestByHash: async () => recorded,
+      readSourceRecord: async (_pool, sourceId) =>
+        sourceId === "7"
+          ? ({ canonicalSourceKey: "url:https://example.com/stable.pdf" } as never)
+          : undefined,
+      readSourceSubmissionRecordByRequestHash: async () =>
+        recorded
+          ? ({
+              canonicalSourceKey: "url:https://example.com/stable.pdf",
+              requestHash: recorded.requestHash,
+              sourceId: "7",
+            } as never)
+          : undefined,
+      createProductionArtifactDraft: async () => {
+        ingestCalls += 1;
+        throw new Error("accepted replay must not ingest");
+      },
+      reconstructSourceSubmission: async () => {
+        reconstructionCalls += 1;
+        return { source: { sourceId: "7" }, submissionOutcome: "created" } as never;
+      },
+      markPublicWriteRequestAccepted: async () => {
+        acceptanceWrites += 1;
+        if (!recorded) throw new Error("missing recorded request");
+        return recorded;
+      },
+    });
+    try {
+      const signed = await buildSignedPublicWriteBody(wallet, {
+        actionType: "source_submit",
+        actorAddress: wallet.address,
+        chainId: 31337,
+        issuedAt: new Date().toISOString(),
+        payload: { sourceType: "url", sourceUrl: "https://example.com/stable.pdf" },
+        requestNonce: "source-accepted-replay",
+        scopeKey: `submit:${wallet.address.toLowerCase()}`,
+      });
+      recorded = {
+        ...signed.envelope,
+        actionType: "source_submit",
+        createdAt: "2026-07-12T00:00:00.000Z",
+        outcomeDetail: "source:7",
+        requestHash: hashPublicWriteEnvelope(signed.envelope),
+        requestId: "91",
+        signature: signed.signature,
+        status: "accepted",
+        updatedAt: "2026-07-12T00:00:01.000Z",
+      };
+      const submit = () =>
+        fetch(`${baseUrl}/sources`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(signed),
+        });
+      expect((await submit()).status).to.equal(200);
+      expect((await submit()).status).to.equal(200);
+      expect(reconstructionCalls).to.equal(2);
+      expect(ingestCalls).to.equal(0);
+      expect(acceptanceWrites).to.equal(0);
+      expect(recorded.updatedAt).to.equal("2026-07-12T00:00:01.000Z");
+      expect(recorded.outcomeDetail).to.equal("source:7");
+    } finally {
+      await close();
+    }
+  });
+
+  it("fails corrupt accepted source replays closed before leases, quotas, or writes", async () => {
+    for (const scenario of [
+      "missing-source",
+      "mismatched-source",
+      "missing-submission",
+      "bad-outcome",
+    ] as const) {
+      const wallet = Wallet.createRandom();
+      let recorded: PublicWriteRequestView | undefined;
+      let mutationCalls = 0;
+      const { baseUrl, close } = await startServer({
+        readPublicWriteRequestByHash: async () => recorded,
+        readSourceRecord: async () =>
+          scenario === "missing-source"
+            ? undefined
+            : ({
+                canonicalSourceKey:
+                  scenario === "mismatched-source"
+                    ? "url:https://example.com/other.pdf"
+                    : "url:https://example.com/stable.pdf",
+              } as never),
+        readSourceSubmissionRecordByRequestHash: async () =>
+          scenario === "missing-submission" || !recorded
+            ? undefined
+            : ({
+                canonicalSourceKey: "url:https://example.com/stable.pdf",
+                requestHash: recorded.requestHash,
+                sourceId: "7",
+              } as never),
+        reservePublicWriteRequestExecution: async () => {
+          mutationCalls += 1;
+          return true;
+        },
+        createProductionArtifactDraft: async () => {
+          mutationCalls += 1;
+          throw new Error("must not ingest");
+        },
+        reconstructSourceSubmission: async () => {
+          mutationCalls += 1;
+          throw new Error("must not reconstruct corrupt state");
+        },
+        markPublicWriteRequestAccepted: async () => {
+          mutationCalls += 1;
+          if (!recorded) throw new Error("missing request");
+          return recorded;
+        },
+        markPublicWriteRequestRejected: async () => {
+          mutationCalls += 1;
+          if (!recorded) throw new Error("missing request");
+          return recorded;
+        },
+      });
+      try {
+        const signed = await buildSignedPublicWriteBody(wallet, {
+          actionType: "source_submit",
+          actorAddress: wallet.address,
+          chainId: 31337,
+          issuedAt: new Date().toISOString(),
+          payload: { sourceType: "url", sourceUrl: "https://example.com/stable.pdf" },
+          requestNonce: `source-corrupt-${scenario}`,
+          scopeKey: `submit:${wallet.address.toLowerCase()}`,
+        });
+        recorded = {
+          ...signed.envelope,
+          actionType: "source_submit",
+          createdAt: "2026-07-12T00:00:00.000Z",
+          outcomeDetail: scenario === "bad-outcome" ? "corrupt" : "source:7",
+          requestHash: hashPublicWriteEnvelope(signed.envelope),
+          requestId: "91",
+          signature: signed.signature,
+          status: "accepted",
+          updatedAt: "2026-07-12T00:00:01.000Z",
+        };
+        const response = await fetch(`${baseUrl}/sources`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(signed),
+        });
+        expect(response.status, scenario).to.equal(409);
+        expect(await response.json()).to.deep.equal({
+          error: "public_write_request_reconciliation_mismatch",
+        });
+        expect(mutationCalls, scenario).to.equal(0);
+      } finally {
+        await close();
+      }
+    }
+  });
+
   it("rate-limits repeated public source submissions under a dedicated source scope", async () => {
     const wallet = Wallet.createRandom();
     let createCalls = 0;
+    let reconstructionCalls = 0;
     const { baseUrl, close } = await startServer(
       {
         createProductionArtifactDraft: async (_input, _authorAddress) => {
@@ -4731,6 +5330,21 @@ describe("ApiServer", () => {
             submissionOutcome: outcome,
           };
         },
+        readSourceRecord: async (_pool, sourceId) =>
+          sourceId === "7" ? ({ canonicalSourceKey: "arxiv:2405.15793" } as never) : undefined,
+        readSourceSubmissionRecordByRequestHash: async (_pool, requestHash) =>
+          ({
+            canonicalSourceKey: "arxiv:2405.15793",
+            requestHash,
+            sourceId: "7",
+          }) as never,
+        reconstructSourceSubmission: async () => {
+          reconstructionCalls += 1;
+          return {
+            source: { canonicalSourceKey: "arxiv:2405.15793", sourceId: "7" },
+            submissionOutcome: "created",
+          } as never;
+        },
       },
       {
         rateLimitConfig: {
@@ -4743,25 +5357,31 @@ describe("ApiServer", () => {
     );
 
     try {
+      const firstSigned = await buildSignedPublicWriteBody(wallet, {
+        actionType: "source_submit",
+        actorAddress: wallet.address,
+        chainId: 31337,
+        issuedAt: new Date().toISOString(),
+        payload: {
+          sourceType: "url",
+          sourceUrl: "https://doi.org/10.48550/arxiv.2405.15793",
+        },
+        requestNonce: "nonce-source-1",
+        scopeKey: `submit:${wallet.address.toLowerCase()}`,
+      });
       const firstResponse = await fetch(`${baseUrl}/sources`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(
-          await buildSignedPublicWriteBody(wallet, {
-            actionType: "source_submit",
-            actorAddress: wallet.address,
-            chainId: 31337,
-            issuedAt: new Date().toISOString(),
-            payload: {
-              sourceType: "url",
-              sourceUrl: "https://doi.org/10.48550/arxiv.2405.15793",
-            },
-            requestNonce: "nonce-source-1",
-            scopeKey: `submit:${wallet.address.toLowerCase()}`,
-          }),
-        ),
+        body: JSON.stringify(firstSigned),
       });
       expect(firstResponse.status).to.equal(200);
+
+      const replayResponse = await fetch(`${baseUrl}/sources`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(firstSigned),
+      });
+      expect(replayResponse.status).to.equal(200);
 
       const secondResponse = await fetch(`${baseUrl}/sources`, {
         method: "POST",
@@ -4774,7 +5394,7 @@ describe("ApiServer", () => {
             issuedAt: new Date().toISOString(),
             payload: {
               sourceType: "url",
-              sourceUrl: "doi:10.48550/arxiv.2405.15793",
+              sourceUrl: "https://example.com/a-different-source.pdf",
             },
             requestNonce: "nonce-source-2",
             scopeKey: `submit:${wallet.address.toLowerCase()}`,
@@ -4782,8 +5402,8 @@ describe("ApiServer", () => {
         ),
       });
       const secondPayload = await secondResponse.json();
-      expect(secondPayload.ok).to.equal(true);
-      expect(secondPayload.result.submissionOutcome).to.equal("duplicate");
+      expect(secondResponse.status).to.equal(429);
+      expect(secondPayload.error).to.equal("rate_limited");
 
       const thirdResponse = await fetch(`${baseUrl}/sources`, {
         method: "POST",
@@ -4809,7 +5429,8 @@ describe("ApiServer", () => {
         retryAfterSeconds: 60,
         scope: "sourceSubmission",
       });
-      expect(createCalls).to.equal(2);
+      expect(createCalls).to.equal(1);
+      expect(reconstructionCalls).to.equal(1);
     } finally {
       await close();
     }
@@ -5077,8 +5698,8 @@ describe("ApiServer", () => {
         ),
       });
       const secondPayload = await secondResponse.json();
-      expect(secondPayload.ok).to.equal(true);
-      expect(secondPayload.result.submissionOutcome).to.equal("duplicate");
+      expect(secondResponse.status).to.equal(429);
+      expect(secondPayload.error).to.equal("rate_limited");
 
       const thirdResponse = await fetch(`${baseUrl}/agent/sources`, {
         method: "POST",
@@ -5104,7 +5725,7 @@ describe("ApiServer", () => {
         retryAfterSeconds: 60,
         scope: "agentSourceSubmission",
       });
-      expect(ingestCalls).to.equal(2);
+      expect(ingestCalls).to.equal(1);
     } finally {
       await close();
     }
@@ -8348,6 +8969,8 @@ describe("ApiServer", () => {
             settled: options.settled ?? true,
             direction: 1,
             confidenceBps: 7500,
+            effectiveDecisionIdAtCommit: "8",
+            resolutionDecisionId: null,
             finalStatus: options.finalStatus ?? 2,
             matched: false,
             payoutAmount: "0",
@@ -8373,6 +8996,8 @@ describe("ApiServer", () => {
       expect(payload.items[0].claimId).to.equal("2");
       expect(payload.items[0].settled).to.equal(true);
       expect(payload.items[0].finalStatus).to.equal(2);
+      expect(payload.items[0].effectiveDecisionIdAtCommit).to.equal("8");
+      expect(payload.items[0].resolutionDecisionId).to.equal(null);
     } finally {
       await close();
     }

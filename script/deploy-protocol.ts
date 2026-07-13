@@ -19,6 +19,7 @@ import { getProvider, getRpcUrl } from "../src/shared/contracts.js";
 import { getDeploymentPath, saveDeploymentFile } from "../src/shared/deployment.js";
 import { isGcsUrl } from "../src/shared/gcs.js";
 import { createManagedOperatorSigner } from "../src/shared/operator.js";
+import { readEnvValue } from "../src/shared/secrets.js";
 
 const ROLE = (name: string) => keccak256(toUtf8Bytes(name));
 
@@ -53,13 +54,86 @@ export const LOCAL_DEPLOYMENT_BOOTSTRAP_ROLES = [
   "RESOLVER_ROLE",
   "CHECKPOINT_PUBLISHER_ROLE",
   "MODULE_ADMIN_ROLE",
-  "ESCROW_ADMIN_ROLE",
+  "BOUNTY_SETTLER_ROLE",
   "AGENT_BUDGET_MANAGER_ROLE",
   "MARKET_SETTLER_ROLE",
   "REWARD_SETTLER_ROLE",
   "COURT_ROLE",
   "PAUSER_ROLE",
 ] as const;
+
+export const RESOLVER_OPERATOR_ROLES = [
+  "RESOLVER_ROLE",
+  "BOUNTY_SETTLER_ROLE",
+  "AGENT_BUDGET_MANAGER_ROLE",
+  "MARKET_SETTLER_ROLE",
+  "REWARD_SETTLER_ROLE",
+  "COURT_ROLE",
+  "PAUSER_ROLE",
+] as const;
+
+export const CLAIM_SUBMITTER_OPERATOR_ROLES = ["CLAIM_SUBMITTER_ROLE"] as const;
+
+export const CHECKPOINT_OPERATOR_ROLES = [
+  "CHECKPOINT_PUBLISHER_ROLE",
+  "REWARD_SETTLER_ROLE",
+] as const;
+
+export const TIMELOCK_MANAGED_ROLES = [
+  "PARAMETER_ADMIN_ROLE",
+  "MODULE_ADMIN_ROLE",
+  "ESCROW_ADMIN_ROLE",
+] as const;
+
+export const PRODUCTION_DEPLOYMENT_KEY_ENV_KEYS = [
+  "SP_PROTOCOL_ADMIN_PRIVATE_KEY",
+  "SP_CLAIM_SUBMITTER_PRIVATE_KEY",
+  "SP_REPLICATION_SUBMITTER_PRIVATE_KEY",
+  "SP_RESOLVER_PRIVATE_KEY",
+  "SP_CHECKPOINT_PUBLISHER_PRIVATE_KEY",
+] as const;
+
+export type DeploymentSignerAddresses = {
+  admin: string;
+  claimSubmitter: string;
+  checkpointPublisher: string;
+  replicationSubmitter: string;
+  resolver: string;
+};
+
+export function validateDeploymentSignerTopology(
+  chainId: bigint,
+  env: NodeJS.ProcessEnv,
+  addresses?: DeploymentSignerAddresses,
+): void {
+  if (chainId === 31337n) {
+    return;
+  }
+
+  const missingKeys = PRODUCTION_DEPLOYMENT_KEY_ENV_KEYS.filter((key) => !readEnvValue(env, key));
+  if (missingKeys.length > 0) {
+    throw new Error(
+      `remote deployments require dedicated signer keys; missing ${missingKeys.join(", ")}`,
+    );
+  }
+  if (!addresses) {
+    return;
+  }
+
+  const labelsByAddress = new Map<string, string[]>();
+  for (const [label, address] of Object.entries(addresses)) {
+    const normalized = address.toLowerCase();
+    labelsByAddress.set(normalized, [...(labelsByAddress.get(normalized) ?? []), label]);
+  }
+  const collisions = [...labelsByAddress.values()].filter((labels) => labels.length > 1);
+  if (collisions.length > 0) {
+    throw new Error(
+      `remote deployment signer addresses must be distinct; collisions: ${collisions
+        .map((labels) => labels.join("/"))
+        .join(", ")}`,
+    );
+  }
+}
 
 function getContractFactory(name: ArtifactName, signer: ContractRunner): ContractFactory {
   const artifact = DEPLOYMENT_ARTIFACTS[name];
@@ -92,6 +166,28 @@ export type LocalGovernanceDeploymentConfig = {
   votingDelayBlocks: bigint;
   votingPeriodBlocks: bigint;
 };
+
+export function resolveMinimumAuthorBondWei(
+  env: NodeJS.ProcessEnv = process.env,
+  options: { localDevelopment?: boolean } = {},
+): bigint {
+  const wei = readOptionalTrimmedEnv(env, "SP_MIN_AUTHOR_BOND_WEI");
+  const ether = readOptionalTrimmedEnv(env, "SP_MIN_AUTHOR_BOND_ETH");
+  if (wei && ether) {
+    throw new Error("configure only one of SP_MIN_AUTHOR_BOND_WEI or SP_MIN_AUTHOR_BOND_ETH");
+  }
+  if (!wei && !ether && !options.localDevelopment) {
+    throw new Error("remote deployments require SP_MIN_AUTHOR_BOND_WEI or SP_MIN_AUTHOR_BOND_ETH");
+  }
+  const value = wei ? getEnvUint(env, "SP_MIN_AUTHOR_BOND_WEI", 0n) : parseEther(ether ?? "0.005");
+  if (value < 0n) {
+    throw new Error("minimum author bond cannot be negative");
+  }
+  if (value === 0n && !options.localDevelopment) {
+    throw new Error("remote deployments require a nonzero minimum author bond");
+  }
+  return value;
+}
 
 export function resolveLocalGovernanceDeploymentConfig(
   env: NodeJS.ProcessEnv = process.env,
@@ -154,36 +250,63 @@ export function isDeployLocalEntrypoint(moduleUrl: string, argv: string[] = proc
 }
 
 export async function deployLocalFromEnv(env: NodeJS.ProcessEnv = process.env): Promise<void> {
-  const deployer = createManagedOperatorSigner(
-    ["SP_PROTOCOL_ADMIN_PRIVATE_KEY", "SP_OPERATOR_PRIVATE_KEY"],
-    { env, localAccountIndex: 0 },
-  );
+  const provider = getProvider(getRpcUrl(env));
+  const networkInfo = await provider.getNetwork();
+  validateDeploymentSignerTopology(networkInfo.chainId, env);
+  const signerKeys = (dedicatedKey: string): string[] =>
+    networkInfo.chainId === 31337n ? [dedicatedKey, "SP_OPERATOR_PRIVATE_KEY"] : [dedicatedKey];
+  const deployer = createManagedOperatorSigner(signerKeys("SP_PROTOCOL_ADMIN_PRIVATE_KEY"), {
+    env,
+    localAccountIndex: 0,
+  });
   const replicationSubmitter = createManagedOperatorSigner(
-    ["SP_REPLICATION_SUBMITTER_PRIVATE_KEY", "SP_OPERATOR_PRIVATE_KEY"],
+    signerKeys("SP_REPLICATION_SUBMITTER_PRIVATE_KEY"),
     { env, localAccountIndex: 3 },
   );
-  const resolverOperator = createManagedOperatorSigner(
-    ["SP_RESOLVER_PRIVATE_KEY", "SP_OPERATOR_PRIVATE_KEY"],
-    { env, localAccountIndex: 4 },
-  );
+  const claimSubmitter = createManagedOperatorSigner(signerKeys("SP_CLAIM_SUBMITTER_PRIVATE_KEY"), {
+    env,
+    localAccountIndex: 2,
+  });
+  const resolverOperator = createManagedOperatorSigner(signerKeys("SP_RESOLVER_PRIVATE_KEY"), {
+    env,
+    localAccountIndex: 4,
+  });
   const checkpointPublisher = createManagedOperatorSigner(
-    ["SP_CHECKPOINT_PUBLISHER_PRIVATE_KEY", "SP_OPERATOR_PRIVATE_KEY"],
+    signerKeys("SP_CHECKPOINT_PUBLISHER_PRIVATE_KEY"),
     { env, localAccountIndex: 5 },
   );
   const deployerAddress = await deployer.getAddress();
   const replicationSubmitterAddress = await replicationSubmitter.getAddress();
+  const claimSubmitterAddress = await claimSubmitter.getAddress();
   const resolverOperatorAddress = await resolverOperator.getAddress();
   const checkpointPublisherAddress = await checkpointPublisher.getAddress();
+  const deploymentOperators = {
+    deployer: deployerAddress,
+    claimSubmitter: claimSubmitterAddress,
+    replicationSubmitter: replicationSubmitterAddress,
+    resolverOperator: resolverOperatorAddress,
+    checkpointPublisher: checkpointPublisherAddress,
+  };
+  validateDeploymentSignerTopology(networkInfo.chainId, env, {
+    admin: deployerAddress,
+    claimSubmitter: claimSubmitterAddress,
+    checkpointPublisher: checkpointPublisherAddress,
+    replicationSubmitter: replicationSubmitterAddress,
+    resolver: resolverOperatorAddress,
+  });
   const DEFAULT_ADMIN_ROLE = "0x0000000000000000000000000000000000000000000000000000000000000000";
   const governanceConfig = resolveLocalGovernanceDeploymentConfig(env);
   const bootstrapVoteRecipients = sumBootstrapAllocations([
     { account: deployerAddress, amount: governanceConfig.bootstrapVoteAmount },
     { account: replicationSubmitterAddress, amount: governanceConfig.bootstrapVoteAmount },
+    { account: claimSubmitterAddress, amount: governanceConfig.bootstrapVoteAmount },
     { account: resolverOperatorAddress, amount: governanceConfig.bootstrapVoteAmount },
     { account: checkpointPublisherAddress, amount: governanceConfig.bootstrapVoteAmount },
   ]);
 
-  const provider = getProvider(getRpcUrl(env));
+  const minimumAuthorBondWei = resolveMinimumAuthorBondWei(env, {
+    localDevelopment: networkInfo.chainId === 31337n,
+  });
   const deployTxOverrides = { gasLimit: 8_000_000n };
   const setupTxOverrides = { gasLimit: 500_000n };
   try {
@@ -200,41 +323,21 @@ export async function deployLocalFromEnv(env: NodeJS.ProcessEnv = process.env): 
       ).wait();
     }
 
-    await (
-      await accessController.grantRole(
-        ROLE("RESOLVER_ROLE"),
-        resolverOperatorAddress,
-        setupTxOverrides,
-      )
-    ).wait();
-    await (
-      await accessController.grantRole(
-        ROLE("ESCROW_ADMIN_ROLE"),
-        resolverOperatorAddress,
-        setupTxOverrides,
-      )
-    ).wait();
-    await (
-      await accessController.grantRole(
-        ROLE("REWARD_SETTLER_ROLE"),
-        resolverOperatorAddress,
-        setupTxOverrides,
-      )
-    ).wait();
-    await (
-      await accessController.grantRole(
-        ROLE("CHECKPOINT_PUBLISHER_ROLE"),
-        checkpointPublisherAddress,
-        setupTxOverrides,
-      )
-    ).wait();
-    await (
-      await accessController.grantRole(
-        ROLE("REWARD_SETTLER_ROLE"),
-        checkpointPublisherAddress,
-        setupTxOverrides,
-      )
-    ).wait();
+    for (const role of RESOLVER_OPERATOR_ROLES) {
+      await (
+        await accessController.grantRole(ROLE(role), resolverOperatorAddress, setupTxOverrides)
+      ).wait();
+    }
+    for (const role of CLAIM_SUBMITTER_OPERATOR_ROLES) {
+      await (
+        await accessController.grantRole(ROLE(role), claimSubmitterAddress, setupTxOverrides)
+      ).wait();
+    }
+    for (const role of CHECKPOINT_OPERATOR_ROLES) {
+      await (
+        await accessController.grantRole(ROLE(role), checkpointPublisherAddress, setupTxOverrides)
+      ).wait();
+    }
 
     const ProtocolParameters = getContractFactory("ProtocolParameters", deployer);
     const protocolParameters = (await ProtocolParameters.deploy(
@@ -242,6 +345,13 @@ export async function deployLocalFromEnv(env: NodeJS.ProcessEnv = process.env): 
       deployTxOverrides,
     )) as UntypedContract;
     await protocolParameters.waitForDeployment();
+    await (
+      await protocolParameters.setUintParameter(
+        keccak256(toUtf8Bytes("osp.claim.minAuthorBond")),
+        minimumAuthorBondWei,
+        setupTxOverrides,
+      )
+    ).wait();
 
     const ResolutionModuleRegistry = getContractFactory("ResolutionModuleRegistry", deployer);
     const resolutionModuleRegistry = (await ResolutionModuleRegistry.deploy(
@@ -319,14 +429,6 @@ export async function deployLocalFromEnv(env: NodeJS.ProcessEnv = process.env): 
     )) as UntypedContract;
     await artifactRegistry.waitForDeployment();
 
-    const BondEscrow = getContractFactory("BondEscrow", deployer);
-    const bondEscrow = (await BondEscrow.deploy(
-      await accessController.getAddress(),
-      await claimRegistry.getAddress(),
-      deployTxOverrides,
-    )) as UntypedContract;
-    await bondEscrow.waitForDeployment();
-
     const AgentRegistry = getContractFactory("AgentRegistry", deployer);
     const agentRegistry = (await AgentRegistry.deploy(
       await accessController.getAddress(),
@@ -352,6 +454,30 @@ export async function deployLocalFromEnv(env: NodeJS.ProcessEnv = process.env): 
     )) as UntypedContract;
     await replicationRegistry.waitForDeployment();
 
+    const ProtocolTreasury = getContractFactory("ProtocolTreasury", deployer);
+    const protocolTreasury = (await ProtocolTreasury.deploy(
+      deployerAddress,
+      deployTxOverrides,
+    )) as UntypedContract;
+    await protocolTreasury.waitForDeployment();
+
+    const BondEscrow = getContractFactory("BondEscrow", deployer);
+    const bondEscrow = (await BondEscrow.deploy(
+      await accessController.getAddress(),
+      await claimRegistry.getAddress(),
+      await replicationRegistry.getAddress(),
+      await protocolTreasury.getAddress(),
+      deployTxOverrides,
+    )) as UntypedContract;
+    await bondEscrow.waitForDeployment();
+    await (
+      await claimRegistry.configureProtocolDependencies(
+        await bondEscrow.getAddress(),
+        await replicationRegistry.getAddress(),
+        setupTxOverrides,
+      )
+    ).wait();
+
     const ReputationCheckpointRegistry = getContractFactory(
       "ReputationCheckpointRegistry",
       deployer,
@@ -364,13 +490,6 @@ export async function deployLocalFromEnv(env: NodeJS.ProcessEnv = process.env): 
       deployTxOverrides,
     )) as UntypedContract;
     await reputationCheckpointRegistry.waitForDeployment();
-
-    const ProtocolTreasury = getContractFactory("ProtocolTreasury", deployer);
-    const protocolTreasury = (await ProtocolTreasury.deploy(
-      deployerAddress,
-      deployTxOverrides,
-    )) as UntypedContract;
-    await protocolTreasury.waitForDeployment();
 
     const EpistemicMarket = getContractFactory("EpistemicMarket", deployer);
     const epistemicMarket = (await EpistemicMarket.deploy(
@@ -470,20 +589,15 @@ export async function deployLocalFromEnv(env: NodeJS.ProcessEnv = process.env): 
         setupTxOverrides,
       )
     ).wait();
-    await (
-      await accessController.grantRole(
-        ROLE("PARAMETER_ADMIN_ROLE"),
-        await protocolTimelock.getAddress(),
-        setupTxOverrides,
-      )
-    ).wait();
-    await (
-      await accessController.grantRole(
-        ROLE("MODULE_ADMIN_ROLE"),
-        await protocolTimelock.getAddress(),
-        setupTxOverrides,
-      )
-    ).wait();
+    for (const role of TIMELOCK_MANAGED_ROLES) {
+      await (
+        await accessController.grantRole(
+          ROLE(role),
+          await protocolTimelock.getAddress(),
+          setupTxOverrides,
+        )
+      ).wait();
+    }
     await (
       await protocolGovernanceToken.transferOwnership(
         await protocolTimelock.getAddress(),
@@ -496,20 +610,11 @@ export async function deployLocalFromEnv(env: NodeJS.ProcessEnv = process.env): 
         setupTxOverrides,
       )
     ).wait();
-    await (
-      await accessController.revokeRole(
-        ROLE("PARAMETER_ADMIN_ROLE"),
-        deployerAddress,
-        setupTxOverrides,
-      )
-    ).wait();
-    await (
-      await accessController.revokeRole(
-        ROLE("MODULE_ADMIN_ROLE"),
-        deployerAddress,
-        setupTxOverrides,
-      )
-    ).wait();
+    for (const role of LOCAL_DEPLOYMENT_BOOTSTRAP_ROLES) {
+      await (
+        await accessController.revokeRole(ROLE(role), deployerAddress, setupTxOverrides)
+      ).wait();
+    }
     await (
       await accessController.revokeRole(DEFAULT_ADMIN_ROLE, deployerAddress, setupTxOverrides)
     ).wait();
@@ -523,7 +628,6 @@ export async function deployLocalFromEnv(env: NodeJS.ProcessEnv = process.env): 
     }
 
     const latestBlock = await provider.getBlockNumber();
-    const networkInfo = await provider.getNetwork();
 
     await saveDeploymentFile(
       {
@@ -552,6 +656,10 @@ export async function deployLocalFromEnv(env: NodeJS.ProcessEnv = process.env): 
           benchmarkModule: await benchmarkModule.getAddress(),
           wetLabModule: await wetLabModule.getAddress(),
         },
+        operators: deploymentOperators,
+        parameters: {
+          minimumAuthorBondWei: minimumAuthorBondWei.toString(),
+        },
       },
       deploymentPath,
     );
@@ -559,16 +667,14 @@ export async function deployLocalFromEnv(env: NodeJS.ProcessEnv = process.env): 
     console.log(
       JSON.stringify(
         {
-          deployer: deployerAddress,
-          replicationSubmitter: replicationSubmitterAddress,
-          resolverOperator: resolverOperatorAddress,
-          checkpointPublisher: checkpointPublisherAddress,
+          ...deploymentOperators,
           bootstrapVoters: bootstrapVoteRecipients.map((allocation) => ({
             account: allocation.account,
             amount: allocation.amount.toString(),
           })),
           deploymentBlock: latestBlock,
           deploymentFile: deploymentPath,
+          minimumAuthorBondWei: minimumAuthorBondWei.toString(),
         },
         null,
         2,

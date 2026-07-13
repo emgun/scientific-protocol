@@ -1,5 +1,7 @@
+import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { Pool, type PoolClient, type PoolConfig } from "pg";
 import { readPositiveIntegerEnv } from "../shared/cli.js";
 import type { DeploymentFile } from "../shared/deployment.js";
@@ -15,11 +17,15 @@ import type {
   ForecastView,
   ReadModel,
   ReplicationView,
+  ResolutionDecisionView,
 } from "../shared/read-model.js";
 import { readEnvValue } from "../shared/secrets.js";
 
 export const DEFAULT_DATABASE_URL = "postgresql://postgres@127.0.0.1:5432/scientific_protocol";
-export const DEFAULT_MIGRATIONS_PATH = path.resolve(process.cwd(), "ops", "migrations");
+export const DEFAULT_MIGRATIONS_PATH = fileURLToPath(
+  new URL("../../ops/migrations", import.meta.url),
+);
+const MIGRATION_LOCK_ID = 7_346_120_119;
 
 type MetadataRow = {
   key: string;
@@ -218,30 +224,47 @@ export async function migrateReadModelDb(
 ): Promise<void> {
   const client = await pool.connect();
   try {
+    await client.query("SELECT pg_advisory_lock($1)", [MIGRATION_LOCK_ID]);
     await client.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         version TEXT PRIMARY KEY,
+        checksum TEXT,
         applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
+    await client.query("ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS checksum TEXT");
 
-    const applied = await client.query<{ version: string }>(
-      "SELECT version FROM schema_migrations",
+    const applied = await client.query<{ checksum: string | null; version: string }>(
+      "SELECT version, checksum FROM schema_migrations",
     );
-    const appliedVersions = new Set(applied.rows.map((row) => row.version));
+    const appliedVersions = new Map(applied.rows.map((row) => [row.version, row.checksum]));
 
     const files = (await readdir(migrationsPath)).filter((file) => file.endsWith(".sql")).sort();
 
     for (const file of files) {
+      const sql = await readFile(path.join(migrationsPath, file), "utf8");
+      const checksum = createHash("sha256").update(sql).digest("hex");
+      const appliedChecksum = appliedVersions.get(file);
       if (appliedVersions.has(file)) {
+        if (appliedChecksum && appliedChecksum !== checksum) {
+          throw new Error(`migration checksum mismatch: ${file}`);
+        }
+        if (!appliedChecksum) {
+          await client.query("UPDATE schema_migrations SET checksum = $2 WHERE version = $1", [
+            file,
+            checksum,
+          ]);
+        }
         continue;
       }
 
-      const sql = await readFile(path.join(migrationsPath, file), "utf8");
       await client.query("BEGIN");
       try {
         await client.query(sql);
-        await client.query("INSERT INTO schema_migrations (version) VALUES ($1)", [file]);
+        await client.query("INSERT INTO schema_migrations (version, checksum) VALUES ($1, $2)", [
+          file,
+          checksum,
+        ]);
         await client.query("COMMIT");
       } catch (error) {
         await client.query("ROLLBACK");
@@ -249,6 +272,7 @@ export async function migrateReadModelDb(
       }
     }
   } finally {
+    await client.query("SELECT pg_advisory_unlock($1)", [MIGRATION_LOCK_ID]).catch(() => {});
     client.release();
   }
 }
@@ -476,6 +500,7 @@ export async function readSyncCursor(
 export async function writeSyncCursor(
   client: PoolClient,
   lastProcessedBlock: number,
+  blockHash?: string,
   cursorName = DEFAULT_INDEXER_CURSOR_NAME,
 ): Promise<void> {
   await client.query(
@@ -488,6 +513,45 @@ export async function writeSyncCursor(
         updated_at = NOW()
     `,
     [cursorName, lastProcessedBlock],
+  );
+  if (blockHash) {
+    await client.query(
+      `
+        INSERT INTO indexer_block_checkpoints (name, block_number, block_hash)
+        VALUES ($1, $2, lower($3))
+        ON CONFLICT (name, block_number)
+        DO UPDATE SET block_hash = EXCLUDED.block_hash, recorded_at = NOW()
+      `,
+      [cursorName, lastProcessedBlock, blockHash],
+    );
+  }
+}
+
+export async function readIndexerBlockCheckpoint(
+  queryable: Queryable,
+  blockNumber: number,
+  cursorName = DEFAULT_INDEXER_CURSOR_NAME,
+): Promise<string | null> {
+  const result = await queryable.query<{ block_hash: string }>(
+    `SELECT block_hash FROM indexer_block_checkpoints WHERE name = $1 AND block_number = $2`,
+    [cursorName, blockNumber],
+  );
+  return result.rows[0]?.block_hash ?? null;
+}
+
+export async function recordIndexerBlockCheckpoint(
+  queryable: Queryable,
+  blockNumber: number,
+  blockHash: string,
+  cursorName = DEFAULT_INDEXER_CURSOR_NAME,
+): Promise<void> {
+  await queryable.query(
+    `
+      INSERT INTO indexer_block_checkpoints (name, block_number, block_hash)
+      VALUES ($1, $2, lower($3))
+      ON CONFLICT (name, block_number) DO NOTHING
+    `,
+    [cursorName, blockNumber, blockHash],
   );
 }
 
@@ -769,10 +833,12 @@ export async function upsertForecast(client: PoolClient, forecast: ForecastView)
         settled,
         direction,
         confidence_bps,
+        effective_decision_id_at_commit,
+        resolution_decision_id,
         final_status,
         matched,
         payout_amount
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
       ON CONFLICT (forecast_id)
       DO UPDATE SET
         claim_id = EXCLUDED.claim_id,
@@ -786,6 +852,14 @@ export async function upsertForecast(client: PoolClient, forecast: ForecastView)
         settled = EXCLUDED.settled,
         direction = EXCLUDED.direction,
         confidence_bps = EXCLUDED.confidence_bps,
+        effective_decision_id_at_commit = COALESCE(
+          forecasts.effective_decision_id_at_commit,
+          EXCLUDED.effective_decision_id_at_commit
+        ),
+        resolution_decision_id = COALESCE(
+          forecasts.resolution_decision_id,
+          EXCLUDED.resolution_decision_id
+        ),
         final_status = COALESCE(forecasts.final_status, EXCLUDED.final_status),
         matched = COALESCE(forecasts.matched, EXCLUDED.matched),
         payout_amount = COALESCE(forecasts.payout_amount, EXCLUDED.payout_amount)
@@ -803,6 +877,8 @@ export async function upsertForecast(client: PoolClient, forecast: ForecastView)
       forecast.settled,
       forecast.direction,
       forecast.confidenceBps,
+      forecast.effectiveDecisionIdAtCommit,
+      forecast.resolutionDecisionId,
       forecast.finalStatus,
       forecast.matched,
       forecast.payoutAmount,
@@ -810,9 +886,56 @@ export async function upsertForecast(client: PoolClient, forecast: ForecastView)
   );
 }
 
+export async function insertResolutionDecision(
+  client: PoolClient,
+  decision: ResolutionDecisionView,
+): Promise<void> {
+  await client.query(
+    `
+      INSERT INTO resolution_decisions (
+        decision_id, claim_id, replication_id, resolution_module, status, claim_status,
+        confidence_bps, resolution_hash, evidence_hash, resolver_type, created_at, actor
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      ON CONFLICT (decision_id) DO NOTHING
+    `,
+    [
+      decision.decisionId,
+      decision.claimId,
+      decision.replicationId,
+      decision.resolutionModule,
+      decision.status,
+      decision.claimStatus,
+      decision.confidenceBps,
+      decision.resolutionHash,
+      decision.evidenceHash,
+      decision.resolverType,
+      decision.createdAt,
+      decision.actor,
+    ],
+  );
+}
+
+export async function markEffectiveResolutionDecision(
+  client: PoolClient,
+  claimId: string,
+  decisionId: string,
+): Promise<void> {
+  await client.query("UPDATE resolution_decisions SET effective = FALSE WHERE claim_id = $1", [
+    claimId,
+  ]);
+  const result = await client.query(
+    "UPDATE resolution_decisions SET effective = TRUE WHERE claim_id = $1 AND decision_id = $2",
+    [claimId, decisionId],
+  );
+  if (result.rowCount !== 1) {
+    throw new Error(`effective resolution decision ${decisionId} missing for claim ${claimId}`);
+  }
+}
+
 export async function applyForecastSettlement(
   client: PoolClient,
   forecastId: string,
+  resolutionDecisionId: string | null,
   finalStatus: number,
   matched: boolean,
   payoutAmount: string,
@@ -821,13 +944,14 @@ export async function applyForecastSettlement(
     `
       UPDATE forecasts
       SET
-        final_status = $2,
-        matched = $3,
-        payout_amount = $4,
+        resolution_decision_id = NULLIF($2, '0'),
+        final_status = $3,
+        matched = $4,
+        payout_amount = $5,
         settled = TRUE
       WHERE forecast_id = $1
     `,
-    [forecastId, finalStatus, matched, payoutAmount],
+    [forecastId, resolutionDecisionId, finalStatus, matched, payoutAmount],
   );
   if (result.rowCount === 0) {
     throw new Error(`forecast ${forecastId} was not present when applying ForecastSettled`);
@@ -1453,6 +1577,7 @@ async function queryReplications(
         outcome,
         resolution_status AS "resolutionStatus",
         confidence_bps AS "confidenceBps",
+        resolution_decision_id AS "resolutionDecisionId",
         resolver_type AS "resolverType",
         resolution_hash AS "resolutionHash",
         evidence_hash AS "evidenceHash",
@@ -1867,6 +1992,8 @@ async function queryForecasts(
         settled,
         direction,
         confidence_bps AS "confidenceBps",
+        effective_decision_id_at_commit AS "effectiveDecisionIdAtCommit",
+        resolution_decision_id AS "resolutionDecisionId",
         final_status AS "finalStatus",
         matched,
         payout_amount AS "payoutAmount"
