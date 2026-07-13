@@ -34,6 +34,8 @@ not the authority boundary.
 - Author-bond refunds use pull-based credits in `BondEscrow`; the timelocked escrow administrator
   cannot choose the withdrawal recipient. Legacy replication bounty releases and treasury slashes
   remain push transfers to recipients fixed by immutable protocol state.
+- Forecast and challenge payouts use beneficiary-owned credits in `EpistemicMarket`. Settlement,
+  reclaim, withdrawal, and resolution therefore cannot be blocked by a reverting beneficiary.
 
 ### Authorization and write attribution
 
@@ -70,9 +72,13 @@ not the authority boundary.
   not depend on settler availability or a newer claim decision, emits the canonical pending/no-
   decision settlement record, and cannot run twice.
 - Revealed forecasts that the settler never settles can be reclaimed (stake only, no bonus) after
-  a long settler-inactivity delay.
+  a long settler-inactivity delay. Reclaim and matched settlement accrue pull credits rather than
+  making recipient calls.
 - Challenge bonds stay committed for a minimum challenge duration, so a challenger cannot rescue a
-  bond by withdrawing just ahead of a dismissal.
+  bond by withdrawing just ahead of a dismissal. Withdrawal and sustained/escalated resolution
+  accrue pull credits; dismissal moves the bond into the reward pool.
+- Market payout withdrawal is beneficiary-authorized, uses checks-effects-interactions plus
+  `nonReentrant`, and allows a contract beneficiary to select a recipient that accepts ETH.
 - Appeal bonds are outcome-dependent: lost appeals (`Rejected`, `Upheld`) forfeit to the protocol
   treasury, won or closed appeals are credited for pull-based withdrawal, so a reverting appellant
   contract cannot block adjudication.

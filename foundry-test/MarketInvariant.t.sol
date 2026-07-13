@@ -183,6 +183,14 @@ contract MarketHandler is Test {
         );
     }
 
+    function withdrawPayout(uint256 amountSeed) external {
+        uint256 available = market.withdrawablePayouts(address(this));
+        if (available == 0) {
+            return;
+        }
+        market.withdrawPayout(bound(amountSeed, 1, available), payable(address(this)));
+    }
+
     function warp(uint256 seed) external {
         vm.warp(block.timestamp + bound(seed, 1 hours, 40 days));
     }
@@ -260,12 +268,14 @@ contract MarketInvariantTest is StdInvariant, ProtocolDeployer {
         targetContract(address(handler));
     }
 
-    /// @dev The market must always hold enough ETH to cover the reward pool plus every
-    /// unsettled forecast stake and open challenge bond.
+    /// @dev The market must always hold enough ETH to cover the reward pool, every unsettled
+    /// forecast stake and open challenge bond, and all pull-based payout credits.
     function invariant_MarketBalanceCoversObligations() public view {
         assertEq(
             address(epistemicMarket).balance,
-            epistemicMarket.rewardPoolBalance() + handler.outstandingObligations()
+            epistemicMarket.rewardPoolBalance() +
+                epistemicMarket.totalWithdrawablePayouts() +
+                handler.outstandingObligations()
         );
     }
 

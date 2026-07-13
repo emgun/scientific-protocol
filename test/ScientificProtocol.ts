@@ -1152,6 +1152,14 @@ describe("ScientificProtocol", () => {
     assert.equal(forecast.settled, true);
     assert.equal(challenge.status, 1n);
     assert.equal(appeal.status, 3n);
+    assert.equal(
+      await protocol.epistemicMarket.withdrawablePayouts(protocol.author.address),
+      ethers.parseEther("2"),
+    );
+    assert.equal(
+      await protocol.epistemicMarket.withdrawablePayouts(protocol.replicator.address),
+      ethers.parseEther("1"),
+    );
   });
 
   it("refuses to settle an unrevealed forecast before the reveal deadline and forfeits it after", async () => {
@@ -1374,10 +1382,11 @@ describe("ScientificProtocol", () => {
       /EpistemicMarketUnauthorizedAgent/,
     );
 
-    const balanceBefore = await ethers.provider.getBalance(protocol.author.address);
     await (await protocol.epistemicMarket.connect(protocol.author).reclaimForecast(1)).wait();
-    const balanceAfter = await ethers.provider.getBalance(protocol.author.address);
-    assert.ok(balanceAfter > balanceBefore);
+    assert.equal(
+      await protocol.epistemicMarket.withdrawablePayouts(protocol.author.address),
+      forecastStake,
+    );
 
     const forecast = await protocol.epistemicMarket.getForecast(1);
     assert.equal(forecast.settled, true);
@@ -1424,6 +1433,181 @@ describe("ScientificProtocol", () => {
     await (await protocol.epistemicMarket.connect(protocol.replicator).withdrawChallenge(1)).wait();
     const challenge = await protocol.epistemicMarket.getChallenge(1);
     assert.equal(challenge.status, BigInt(CHALLENGE_STATUS.Withdrawn));
+    assert.equal(
+      await protocol.epistemicMarket.withdrawablePayouts(protocol.replicator.address),
+      ethers.parseEther("0.5"),
+    );
+  });
+
+  it("credits every terminal market payout despite a rejecting beneficiary and withdraws reentrancy-safe", async () => {
+    const protocol = await deployProtocol();
+    await (
+      await protocol.claimRegistry
+        .connect(protocol.author)
+        .createClaim(
+          makeClaimSummary(protocol.author.address, 1n),
+          ethers.parseEther("0.5"),
+          ethers.ZeroAddress,
+        )
+    ).wait();
+    await (
+      await protocol.epistemicMarket
+        .connect(protocol.admin)
+        .fundRewardPool({ value: ethers.parseEther("10") })
+    ).wait();
+
+    const MarketPayoutActor = await ethers.getContractFactory(
+      "contracts/mocks/MarketPayoutActor.sol:MarketPayoutActor",
+    );
+    const beneficiary = await MarketPayoutActor.deploy(await protocol.epistemicMarket.getAddress());
+    await beneficiary.waitForDeployment();
+    const beneficiaryAddress = await beneficiary.getAddress();
+    await (await beneficiary.setReceiveBehavior(true, false)).wait();
+
+    const stake = ethers.parseEther("1");
+    const saltOne = ethers.keccak256(ethers.toUtf8Bytes("rejecting-match"));
+    const commitmentOne = ethers.keccak256(
+      ethers.AbiCoder.defaultAbiCoder().encode(
+        ["uint8", "uint16", "bytes32"],
+        [FORECAST_DIRECTION.Supports, 9_000, saltOne],
+      ),
+    );
+    const latestBlock = await ethers.provider.getBlock("latest");
+    assert.ok(latestBlock);
+    await (
+      await beneficiary.commitForecast(1, commitmentOne, BigInt(latestBlock.timestamp + 3_600), {
+        value: stake,
+      })
+    ).wait();
+    await (await beneficiary.revealForecast(1, FORECAST_DIRECTION.Supports, 9_000, saltOne)).wait();
+    const decisionId = await createCanonicalResolutionDecision(
+      protocol,
+      1,
+      RESOLUTION_STATUS.Supported,
+    );
+    const settleReceipt = await (
+      await protocol.epistemicMarket.connect(protocol.admin).settleForecast(1, decisionId)
+    ).wait();
+    const forecastCreditLog = settleReceipt?.logs
+      .map((log) => {
+        try {
+          return protocol.epistemicMarket.interface.parseLog(log);
+        } catch {
+          return null;
+        }
+      })
+      .find((log) => log?.name === "ForecastPayoutCredited");
+    assert.ok(forecastCreditLog);
+    assert.equal(forecastCreditLog.args.forecaster, beneficiaryAddress);
+    assert.equal(forecastCreditLog.args.amount, ethers.parseEther("2"));
+
+    const afterFirstForecast = await ethers.provider.getBlock("latest");
+    assert.ok(afterFirstForecast);
+    const saltTwo = ethers.keccak256(ethers.toUtf8Bytes("rejecting-reclaim"));
+    const commitmentTwo = ethers.keccak256(
+      ethers.AbiCoder.defaultAbiCoder().encode(
+        ["uint8", "uint16", "bytes32"],
+        [FORECAST_DIRECTION.Questions, 6_000, saltTwo],
+      ),
+    );
+    await (
+      await beneficiary.commitForecast(
+        1,
+        commitmentTwo,
+        BigInt(afterFirstForecast.timestamp + 60),
+        { value: stake },
+      )
+    ).wait();
+    await (
+      await beneficiary.revealForecast(2, FORECAST_DIRECTION.Questions, 6_000, saltTwo)
+    ).wait();
+
+    const challengeBond = ethers.parseEther("0.5");
+    await (await beneficiary.openChallenge(1, { value: challengeBond })).wait();
+    await (await beneficiary.openChallenge(1, { value: challengeBond })).wait();
+
+    const reclaimDelay = await protocol.epistemicMarket.FORECAST_RECLAIM_DELAY();
+    await ethers.provider.send("evm_increaseTime", [Number(reclaimDelay) + 61]);
+    await ethers.provider.send("evm_mine", []);
+    await (await beneficiary.reclaimForecast(2)).wait();
+    await (await beneficiary.withdrawChallenge(1)).wait();
+    const resolveReceipt = await (
+      await protocol.epistemicMarket
+        .connect(protocol.admin)
+        .resolveChallenge(
+          2,
+          CHALLENGE_STATUS.Sustained,
+          ethers.keccak256(ethers.toUtf8Bytes("rejecting-beneficiary-resolution")),
+        )
+    ).wait();
+    const challengeCreditLog = resolveReceipt?.logs
+      .map((log) => {
+        try {
+          return protocol.epistemicMarket.interface.parseLog(log);
+        } catch {
+          return null;
+        }
+      })
+      .find((log) => log?.name === "ChallengePayoutCredited");
+    assert.ok(challengeCreditLog);
+    assert.equal(challengeCreditLog.args.challenger, beneficiaryAddress);
+    assert.equal(challengeCreditLog.args.amount, ethers.parseEther("1"));
+
+    const totalCredit = ethers.parseEther("4.5");
+    assert.equal(
+      await protocol.epistemicMarket.withdrawablePayouts(beneficiaryAddress),
+      totalCredit,
+    );
+    assert.equal(await protocol.epistemicMarket.totalWithdrawablePayouts(), totalCredit);
+    assert.equal(await ethers.provider.getBalance(beneficiaryAddress), 0n);
+    await assert.rejects(
+      protocol.epistemicMarket.connect(protocol.other).withdrawPayout(1, protocol.other.address),
+      /EpistemicMarketInsufficientPayoutCredit/,
+    );
+    await assert.rejects(
+      beneficiary.withdrawPayout(0, beneficiaryAddress),
+      /EpistemicMarketInvalidAmount/,
+    );
+    await assert.rejects(
+      beneficiary.withdrawPayout(totalCredit, ethers.ZeroAddress),
+      /EpistemicMarketInvalidRecipient/,
+    );
+
+    const routedAmount = ethers.parseEther("0.5");
+    const routedRecipientBefore = await ethers.provider.getBalance(protocol.other.address);
+    await (await beneficiary.withdrawPayout(routedAmount, protocol.other.address)).wait();
+    assert.equal(
+      await ethers.provider.getBalance(protocol.other.address),
+      routedRecipientBefore + routedAmount,
+    );
+    assert.equal(
+      await protocol.epistemicMarket.withdrawablePayouts(beneficiaryAddress),
+      totalCredit - routedAmount,
+    );
+
+    await (await beneficiary.setReceiveBehavior(false, true)).wait();
+    const reentrantWithdrawal = totalCredit - routedAmount;
+    const withdrawReceipt = await (
+      await beneficiary.withdrawPayout(reentrantWithdrawal, beneficiaryAddress)
+    ).wait();
+    const withdrawLog = withdrawReceipt?.logs
+      .map((log) => {
+        try {
+          return protocol.epistemicMarket.interface.parseLog(log);
+        } catch {
+          return null;
+        }
+      })
+      .find((log) => log?.name === "MarketPayoutWithdrawn");
+    assert.ok(withdrawLog);
+    assert.equal(withdrawLog.args.beneficiary, beneficiaryAddress);
+    assert.equal(withdrawLog.args.recipient, beneficiaryAddress);
+    assert.equal(withdrawLog.args.amount, reentrantWithdrawal);
+    assert.equal(await beneficiary.reentryAttempted(), true);
+    assert.equal(await beneficiary.reentrySucceeded(), false);
+    assert.equal(await protocol.epistemicMarket.withdrawablePayouts(beneficiaryAddress), 0n);
+    assert.equal(await protocol.epistemicMarket.totalWithdrawablePayouts(), 0n);
+    assert.equal(await ethers.provider.getBalance(beneficiaryAddress), reentrantWithdrawal);
   });
 
   it("rejects challenges referencing replications that do not belong to the claim", async () => {

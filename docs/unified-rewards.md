@@ -123,6 +123,13 @@ accounting and binding; they do not define which scientific outcomes deserve pay
 The resolver path now records resolution only. Reward movement is handled by the claim reward
 vault and explicit reward settlement.
 
+`EpistemicMarket` maintains a separate pull-credit balance for its stake-backed forecast and
+challenge lifecycle. Positive forecast settlement, delayed forecast reclaim, challenge withdrawal,
+and sustained or escalated challenge resolution accrue to the immutable forecaster or challenger.
+That beneficiary withdraws with `withdrawPayout(amount, recipient)`. This keeps market terminal
+state independent of recipient fallback behavior while leaving the reward pool and claim reward
+vault as distinct accounting domains.
+
 ## Runtime integration
 
 The integrated runtime routes reward movement through [ClaimRewardVault.sol](../contracts/ClaimRewardVault.sol)

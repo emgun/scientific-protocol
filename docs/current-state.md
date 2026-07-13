@@ -47,6 +47,10 @@ known-outcome commitments from extracting the bonus pool. Multiple replication d
 auditable; claim status only moves along valid forward transitions. Once an unrevealed forecast's
 deadline passes, anyone may terminally forfeit its stake to the reward pool without waiting for a
 claim decision. This liveness path preserves the commitment scheme's no-free-option property.
+Matched forecast settlement, delayed forecast reclaim, challenge withdrawal, and successful or
+escalated challenge resolution credit a beneficiary-owned market balance instead of pushing ETH.
+The beneficiary later withdraws to a chosen valid recipient, so recipient behavior cannot block a
+terminal market transition.
 
 ### Schemas and Clients
 

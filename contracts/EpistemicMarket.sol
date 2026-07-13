@@ -30,6 +30,12 @@ contract EpistemicMarket is DepositPausable, ReentrancyGuard, IEpistemicMarket {
     error EpistemicMarketInvalidChallengeStatus(ProtocolTypes.ChallengeStatus status);
     error EpistemicMarketChallengeWithdrawLocked(uint256 challengeId, uint256 unlockAt);
     error EpistemicMarketTransferFailed(address recipient, uint256 amount);
+    error EpistemicMarketInvalidRecipient(address recipient);
+    error EpistemicMarketInsufficientPayoutCredit(
+        address beneficiary,
+        uint256 requested,
+        uint256 available
+    );
     error EpistemicMarketInvalidConfidence(uint16 confidenceBps);
     error EpistemicMarketUnknownResolutionDecision(uint256 decisionId);
     error EpistemicMarketClaimNotForecastable(uint256 claimId, ProtocolTypes.ClaimStatus status);
@@ -112,6 +118,11 @@ contract EpistemicMarket is DepositPausable, ReentrancyGuard, IEpistemicMarket {
         uint256 forfeitedAmount,
         address indexed actor
     );
+    event ForecastPayoutCredited(
+        uint256 indexed forecastId,
+        address indexed forecaster,
+        uint256 amount
+    );
     event ChallengeOpened(
         uint256 indexed challengeId,
         uint256 indexed claimId,
@@ -132,6 +143,16 @@ contract EpistemicMarket is DepositPausable, ReentrancyGuard, IEpistemicMarket {
         address indexed challenger,
         uint256 refundedAmount
     );
+    event ChallengePayoutCredited(
+        uint256 indexed challengeId,
+        address indexed challenger,
+        uint256 amount
+    );
+    event MarketPayoutWithdrawn(
+        address indexed beneficiary,
+        address indexed recipient,
+        uint256 amount
+    );
 
     /// @notice Minimum time a challenge bond stays committed before the challenger can withdraw it.
     /// @dev Prevents a challenger from rescuing a bond by withdrawing just ahead of a dismissal.
@@ -144,6 +165,8 @@ contract EpistemicMarket is DepositPausable, ReentrancyGuard, IEpistemicMarket {
     uint256 public nextForecastId = 1;
     uint256 public nextChallengeId = 1;
     uint256 public rewardPoolBalance;
+    uint256 public totalWithdrawablePayouts;
+    mapping(address beneficiary => uint256 amount) public withdrawablePayouts;
 
     IClaimRegistry public immutable claimRegistry;
     IAgentRegistry public immutable agentRegistry;
@@ -283,7 +306,7 @@ contract EpistemicMarket is DepositPausable, ReentrancyGuard, IEpistemicMarket {
     function settleForecast(
         uint256 forecastId,
         uint256 resolutionDecisionId
-    ) external onlyRole(ProtocolRoles.MARKET_SETTLER_ROLE) nonReentrant {
+    ) external onlyRole(ProtocolRoles.MARKET_SETTLER_ROLE) {
         ForecastCommitment storage forecast = _forecasts[forecastId];
         if (forecast.forecastId == 0) {
             revert EpistemicMarketUnknownForecast(forecastId);
@@ -338,7 +361,8 @@ contract EpistemicMarket is DepositPausable, ReentrancyGuard, IEpistemicMarket {
                     : rewardPoolBalance;
             rewardPoolBalance -= bonus;
             payoutAmount = forecast.stakeAmount + bonus;
-            _safeTransferValue(forecast.forecaster, payoutAmount);
+            _creditPayout(forecast.forecaster, payoutAmount);
+            emit ForecastPayoutCredited(forecastId, forecast.forecaster, payoutAmount);
         } else {
             rewardPoolBalance += forecast.stakeAmount;
         }
@@ -386,11 +410,11 @@ contract EpistemicMarket is DepositPausable, ReentrancyGuard, IEpistemicMarket {
         );
     }
 
-    /// @notice Reclaims the stake of a revealed forecast that the settler never settled.
+    /// @notice Credits the stake of a revealed forecast that the settler never settled.
     /// @dev Safety hatch against settler inactivity. Only available long after the reveal
-    /// deadline, refunds the stake without any bonus, and emits `ForecastSettled` with a
+    /// deadline, credits the stake without any bonus, and emits `ForecastSettled` with a
     /// `Pending` status so read models observe the terminal state.
-    function reclaimForecast(uint256 forecastId) external nonReentrant {
+    function reclaimForecast(uint256 forecastId) external {
         ForecastCommitment storage forecast = _forecasts[forecastId];
         if (forecast.forecastId == 0) {
             revert EpistemicMarketUnknownForecast(forecastId);
@@ -409,7 +433,8 @@ contract EpistemicMarket is DepositPausable, ReentrancyGuard, IEpistemicMarket {
         }
 
         forecast.settled = true;
-        _safeTransferValue(forecast.forecaster, forecast.stakeAmount);
+        _creditPayout(forecast.forecaster, forecast.stakeAmount);
+        emit ForecastPayoutCredited(forecastId, forecast.forecaster, forecast.stakeAmount);
         emit ForecastSettled(
             forecastId,
             0,
@@ -463,10 +488,10 @@ contract EpistemicMarket is DepositPausable, ReentrancyGuard, IEpistemicMarket {
         emit ChallengeOpened(challengeId, claimId, replicationId, msg.sender, agentId, msg.value);
     }
 
-    /// @notice Withdraws an unresolved challenge and refunds the posted bond.
+    /// @notice Withdraws an unresolved challenge and credits the posted bond to its challenger.
     /// @dev The bond stays committed for `MIN_CHALLENGE_DURATION` so the resolver has a
     /// guaranteed window to dismiss a frivolous challenge before the bond can be rescued.
-    function withdrawChallenge(uint256 challengeId) external nonReentrant {
+    function withdrawChallenge(uint256 challengeId) external {
         ChallengeBond storage challenge = _challenges[challengeId];
         if (challenge.challengeId == 0) {
             revert EpistemicMarketUnknownChallenge(challengeId);
@@ -484,7 +509,8 @@ contract EpistemicMarket is DepositPausable, ReentrancyGuard, IEpistemicMarket {
 
         challenge.status = ProtocolTypes.ChallengeStatus.Withdrawn;
         challenge.resolvedAt = block.timestamp;
-        _safeTransferValue(challenge.challenger, challenge.bondAmount);
+        _creditPayout(challenge.challenger, challenge.bondAmount);
+        emit ChallengePayoutCredited(challengeId, challenge.challenger, challenge.bondAmount);
         emit ChallengeWithdrawn(challengeId, challenge.challenger, challenge.bondAmount);
     }
 
@@ -493,7 +519,7 @@ contract EpistemicMarket is DepositPausable, ReentrancyGuard, IEpistemicMarket {
         uint256 challengeId,
         ProtocolTypes.ChallengeStatus status,
         bytes32 resolutionHash
-    ) external onlyRole(ProtocolRoles.RESOLVER_ROLE) nonReentrant {
+    ) external onlyRole(ProtocolRoles.RESOLVER_ROLE) {
         ChallengeBond storage challenge = _challenges[challengeId];
         if (challenge.challengeId == 0) {
             revert EpistemicMarketUnknownChallenge(challengeId);
@@ -520,15 +546,38 @@ contract EpistemicMarket is DepositPausable, ReentrancyGuard, IEpistemicMarket {
                     : rewardPoolBalance;
             rewardPoolBalance -= bonus;
             payoutAmount = challenge.bondAmount + bonus;
-            _safeTransferValue(challenge.challenger, payoutAmount);
+            _creditPayout(challenge.challenger, payoutAmount);
+            emit ChallengePayoutCredited(challengeId, challenge.challenger, payoutAmount);
         } else if (status == ProtocolTypes.ChallengeStatus.Dismissed) {
             rewardPoolBalance += challenge.bondAmount;
         } else if (status == ProtocolTypes.ChallengeStatus.Escalated) {
             payoutAmount = challenge.bondAmount;
-            _safeTransferValue(challenge.challenger, payoutAmount);
+            _creditPayout(challenge.challenger, payoutAmount);
+            emit ChallengePayoutCredited(challengeId, challenge.challenger, payoutAmount);
         }
 
         emit ChallengeResolved(challengeId, status, resolutionHash, payoutAmount, msg.sender);
+    }
+
+    /// @notice Withdraws the caller's forecast and challenge payout credits.
+    /// @dev Uses checks-effects-interactions and a reentrancy guard. Terminal market transitions
+    /// only create credits, so they cannot be blocked by a beneficiary that rejects ETH.
+    function withdrawPayout(uint256 amount, address payable recipient) external nonReentrant {
+        if (amount == 0) {
+            revert EpistemicMarketInvalidAmount(amount);
+        }
+        if (recipient == address(0)) {
+            revert EpistemicMarketInvalidRecipient(recipient);
+        }
+        uint256 available = withdrawablePayouts[msg.sender];
+        if (available < amount) {
+            revert EpistemicMarketInsufficientPayoutCredit(msg.sender, amount, available);
+        }
+
+        withdrawablePayouts[msg.sender] = available - amount;
+        totalWithdrawablePayouts -= amount;
+        _safeTransferValue(recipient, amount);
+        emit MarketPayoutWithdrawn(msg.sender, recipient, amount);
     }
 
     function getForecast(uint256 forecastId) external view returns (ForecastCommitment memory) {
@@ -587,12 +636,16 @@ contract EpistemicMarket is DepositPausable, ReentrancyGuard, IEpistemicMarket {
     }
 
     function _safeTransferValue(address recipient, uint256 amount) internal {
-        // Recipients are never arbitrary: every payout path is either a refund to the
-        // original depositor or a transfer to a recipient fixed by a role-gated flow.
+        // The beneficiary explicitly chooses the recipient while withdrawing its own credit.
         // slither-disable-next-line arbitrary-send-eth
         (bool success, ) = recipient.call{value: amount}("");
         if (!success) {
             revert EpistemicMarketTransferFailed(recipient, amount);
         }
+    }
+
+    function _creditPayout(address beneficiary, uint256 amount) internal {
+        withdrawablePayouts[beneficiary] += amount;
+        totalWithdrawablePayouts += amount;
     }
 }
