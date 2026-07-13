@@ -5263,6 +5263,7 @@ describe("ApiServer", () => {
   it("rate-limits repeated public source submissions under a dedicated source scope", async () => {
     const wallet = Wallet.createRandom();
     let createCalls = 0;
+    let reconstructionCalls = 0;
     const { baseUrl, close } = await startServer(
       {
         createProductionArtifactDraft: async (_input, _authorAddress) => {
@@ -5331,6 +5332,19 @@ describe("ApiServer", () => {
         },
         readSourceRecord: async (_pool, sourceId) =>
           sourceId === "7" ? ({ canonicalSourceKey: "arxiv:2405.15793" } as never) : undefined,
+        readSourceSubmissionRecordByRequestHash: async (_pool, requestHash) =>
+          ({
+            canonicalSourceKey: "arxiv:2405.15793",
+            requestHash,
+            sourceId: "7",
+          }) as never,
+        reconstructSourceSubmission: async () => {
+          reconstructionCalls += 1;
+          return {
+            source: { canonicalSourceKey: "arxiv:2405.15793", sourceId: "7" },
+            submissionOutcome: "created",
+          } as never;
+        },
       },
       {
         rateLimitConfig: {
@@ -5415,7 +5429,8 @@ describe("ApiServer", () => {
         retryAfterSeconds: 60,
         scope: "sourceSubmission",
       });
-      expect(createCalls).to.equal(2);
+      expect(createCalls).to.equal(1);
+      expect(reconstructionCalls).to.equal(1);
     } finally {
       await close();
     }
