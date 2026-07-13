@@ -16,6 +16,13 @@ All notable changes to the `scientific-protocol` package are documented here. Th
 
 ## [0.3.0] — Unreleased
 
+- Separate latest-recorded and effective resolution-decision pointers. Markets settle only against
+  the decision that established claim state; later incompatible evidence remains append-only.
+- Onchain idempotency for signed delegated claim creation, renewable execution leases,
+  transport-level DNS pinning, global client/actor source throttles, and resumable `source_submit`.
+- One gated release chain publishes npm, then the immutable service image, then a GitHub Release;
+  pull requests build and health-smoke the container without credentials.
+
 ### ABI changes
 
 - `BondEscrow` now takes the replication registry as its third constructor argument.

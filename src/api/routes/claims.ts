@@ -43,12 +43,39 @@ export async function handleClaimWriteRoutes(context: RouteContext): Promise<boo
     let accepted = false;
     let draftCheckpoint: string | null = null;
     const leaseOwner = randomUUID();
+    const leaseMs = 5 * 60 * 1000;
     const leaseAcquired = await dependencies.reservePublicWriteRequestExecution(pool, {
-      leaseMs: 5 * 60 * 1000,
+      leaseMs,
       leaseOwner,
       requestId: authenticated.acceptedRequestId,
     });
     if (!leaseAcquired) throw new Error("public_write_request_in_progress");
+    let heartbeatError: Error | null = null;
+    let heartbeatRunning = false;
+    const renewLease = async () => {
+      if (heartbeatError) throw heartbeatError;
+      const renewed = await dependencies.renewPublicWriteRequestExecution(pool, {
+        leaseMs,
+        leaseOwner,
+        requestId: authenticated.acceptedRequestId,
+      });
+      if (!renewed) {
+        heartbeatError = new Error("public_write_request_execution_lease_lost");
+        throw heartbeatError;
+      }
+    };
+    const heartbeat = setInterval(() => {
+      if (heartbeatRunning || heartbeatError) return;
+      heartbeatRunning = true;
+      renewLease()
+        .catch((error) => {
+          heartbeatError = error instanceof Error ? error : new Error(String(error));
+        })
+        .finally(() => {
+          heartbeatRunning = false;
+        });
+    }, 30_000);
+    heartbeat.unref();
     try {
       const payload = authenticated.envelope.payload;
       const result = await dependencies.createProductionClaim(
@@ -73,6 +100,13 @@ export async function handleClaimWriteRoutes(context: RouteContext): Promise<boo
         {
           env,
           requestHash: authenticated.requestHash,
+          assertExecutionLease: async () => {
+            await renewLease();
+            await dependencies.assertPublicWriteRequestExecution(pool, {
+              leaseOwner,
+              requestId: authenticated.acceptedRequestId,
+            });
+          },
           onClaimDraftCreated: async ({ claimId, createClaimTxHash }) => {
             draftCheckpoint = `claim:${claimId}:draft:createTx:${createClaimTxHash}`;
             await dependencies.markPublicWriteRequestPending(
@@ -103,16 +137,26 @@ export async function handleClaimWriteRoutes(context: RouteContext): Promise<boo
       });
     } catch (error) {
       if (!accepted) {
-        await dependencies.markPublicWriteRequestRejected(
-          pool,
-          authenticated.acceptedRequestId,
-          [draftCheckpoint, error instanceof Error ? error.message : String(error)]
-            .filter(Boolean)
-            .join(":reconciliation_required:"),
-        );
+        const stillOwnsLease = await dependencies
+          .assertPublicWriteRequestExecution(pool, {
+            leaseOwner,
+            requestId: authenticated.acceptedRequestId,
+          })
+          .then(() => true)
+          .catch(() => false);
+        if (stillOwnsLease) {
+          await dependencies.markPublicWriteRequestRejected(
+            pool,
+            authenticated.acceptedRequestId,
+            [draftCheckpoint, error instanceof Error ? error.message : String(error)]
+              .filter(Boolean)
+              .join(":reconciliation_required:"),
+          );
+        }
       }
       throw error;
     } finally {
+      clearInterval(heartbeat);
       await dependencies.releasePublicWriteRequestExecution(pool, {
         leaseOwner,
         requestId: authenticated.acceptedRequestId,

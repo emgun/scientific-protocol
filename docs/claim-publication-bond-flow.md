@@ -19,10 +19,12 @@ losing the onchain draft. A successful create returns `publicationStatus: awaiti
 does not open replication work.
 
 The claim metadata commitment binds the signed request hash. Exact signed-request replays resume
-the same request row under a request-scoped advisory lock, locate any already-mined claim by that
-unique commitment, and attach the exact verified artifact only if it is absent. A different payload
-using the same nonce remains rejected. This closes crashes before creation, between creation and
-checkpointing, and after artifact attachment without creating a second claim.
+the same request row under a renewable execution lease. Workers renew and re-check ownership before
+each chain write, and a stale worker cannot reject a row now owned by its replacement. The delegated
+request hash is also registered onchain: `createClaimOnBehalfWithRequestHash` idempotently returns the
+original claim id, so a lease race or arbitrarily old replay cannot create a second claim. Artifact
+attachment is reconciled against that claim before writing. A different payload using the same nonce
+remains rejected.
 
 Source auto-publication follows the same rule. Consensus may prepare a draft, but the source remains
 `ready_for_publication` and its publication attempt remains `claim_ready` until the source author

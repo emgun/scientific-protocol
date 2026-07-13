@@ -11,6 +11,7 @@ import { assertPublicServiceCredentialBoundary } from "../src/api/runtime-securi
 import { resolveReplicationJob } from "../src/resolver/engine.js";
 import {
   assertSafeOutboundUrl,
+  createPinnedLookup,
   fetchBoundedOutbound,
   OutboundResponseLimitError,
   UnsafeOutboundDestinationError,
@@ -54,6 +55,37 @@ describe("RuntimeContainment", () => {
     expect(calls).to.equal(1);
   });
 
+  it("pins transport lookup to the exact address set that passed validation", async () => {
+    const lookup = createPinnedLookup("example.com", [{ address: "93.184.216.34", family: 4 }]);
+    const selected = await new Promise<{ address: string; family: number }>((resolve, reject) => {
+      lookup("example.com", {}, (error, address, family) => {
+        if (error) return reject(error);
+        if (typeof address !== "string" || family === undefined) {
+          return reject(new Error("expected one pinned address"));
+        }
+        resolve({ address, family });
+      });
+    });
+    expect(selected).to.deep.equal({ address: "93.184.216.34", family: 4 });
+    const ipv6Lookup = createPinnedLookup("[fd00::1]", [{ address: "fd00::1", family: 6 }]);
+    const ipv6 = await new Promise<string>((resolve, reject) => {
+      ipv6Lookup("fd00::1", {}, (error, address) => {
+        if (error) return reject(error);
+        if (typeof address !== "string") return reject(new Error("expected pinned IPv6 address"));
+        resolve(address);
+      });
+    });
+    expect(ipv6).to.equal("fd00::1");
+    await assert.rejects(
+      new Promise((resolve, reject) => {
+        lookup("rebound.example.com", {}, (error, address) =>
+          error ? reject(error) : resolve(address),
+        );
+      }),
+      UnsafeOutboundDestinationError,
+    );
+  });
+
   it("caps response bodies before returning them to parsers", async () => {
     const fetchImpl: typeof fetch = async () =>
       new Response("0123456789", { headers: { "content-length": "10" }, status: 200 });
@@ -78,6 +110,12 @@ describe("RuntimeContainment", () => {
         SP_RESOLVER_PRIVATE_KEY: `0x${"11".repeat(32)}`,
       }),
     ).to.throw(/SP_RESOLVER_PRIVATE_KEY/);
+    expect(() =>
+      assertPublicServiceCredentialBoundary({
+        SP_PUBLIC_SERVICE: "true",
+        SP_CLAIM_SUBMITTER_PRIVATE_KEY: `0x${"22".repeat(32)}`,
+      }),
+    ).to.throw(/SP_CLAIM_SUBMITTER_PRIVATE_KEY/);
     expect(() =>
       assertPublicServiceCredentialBoundary({
         SP_PUBLIC_SERVICE: "true",

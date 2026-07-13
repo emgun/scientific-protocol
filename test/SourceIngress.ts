@@ -10,8 +10,10 @@ import type { ArtifactDraftInput, ArtifactIngestionResult } from "../src/artifac
 import { upsertPersistedArtifact } from "../src/coordinator/store.js";
 import { migrateReadModelDb } from "../src/indexer/store.js";
 import {
+  assertPublicWriteRequestExecution,
   insertPublicWriteRequest,
   releasePublicWriteRequestExecution,
+  renewPublicWriteRequestExecution,
   reservePublicWriteRequestExecution,
 } from "../src/shared/public-write-requests.js";
 import {
@@ -919,6 +921,17 @@ describe("source ingress", { skip: database.skipReason }, () => {
       ]);
       expect([first, concurrent].filter(Boolean)).to.have.length(1);
       const winner = first ? "worker-a" : "worker-b";
+      expect(
+        await renewPublicWriteRequestExecution(pool, {
+          leaseMs: 100,
+          leaseOwner: winner,
+          requestId: request.requestId,
+        }),
+      ).to.equal(true);
+      await assertPublicWriteRequestExecution(pool, {
+        leaseOwner: winner,
+        requestId: request.requestId,
+      });
       await releasePublicWriteRequestExecution(pool, {
         leaseOwner: winner,
         requestId: request.requestId,
@@ -938,6 +951,20 @@ describe("source ingress", { skip: database.skipReason }, () => {
           requestId: request.requestId,
         }),
       ).to.equal(true);
+      await assert.rejects(
+        assertPublicWriteRequestExecution(pool, {
+          leaseOwner: "crashed-worker",
+          requestId: request.requestId,
+        }),
+        /public_write_request_execution_lease_lost/,
+      );
+      expect(
+        await renewPublicWriteRequestExecution(pool, {
+          leaseMs: 100,
+          leaseOwner: "crashed-worker",
+          requestId: request.requestId,
+        }),
+      ).to.equal(false);
     } finally {
       await pool.end();
     }

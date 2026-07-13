@@ -9,7 +9,11 @@ import {
   parseBooleanParam,
   parseIntegerParam,
 } from "../params.js";
-import { consumeConfiguredRateLimit, sourceDuplicateCooldownKey } from "../rate-limit.js";
+import {
+  consumeConfiguredRateLimit,
+  requestClientKey,
+  sourceDuplicateCooldownKey,
+} from "../rate-limit.js";
 import {
   buildSourceEventsPayload,
   buildSourceFeedPayload,
@@ -45,6 +49,7 @@ export async function handleSourceWriteRoutes(context: RouteContext): Promise<bo
         url.pathname === "/sources"
           ? ["source_submit", "claim_draft_from_artifact"]
           : "claim_draft_from_artifact",
+      allowRecordedReplayActionTypes: ["source_submit"],
       chainId: writeConfig.chainId,
     });
     try {
@@ -52,19 +57,55 @@ export async function handleSourceWriteRoutes(context: RouteContext): Promise<bo
       const draftInput = parseArtifactDraftPayload(payload);
       if (url.pathname === "/sources") {
         const canonical = canonicalizeSourceDraft(draftInput);
+        if (!authenticated.recordedReplay) {
+          for (const [dimension, bucketKey] of [
+            [
+              "client",
+              `sourceSubmission:client:${requestClientKey(request, rateLimitConfig.trustProxy)}`,
+            ],
+            [
+              "actor",
+              `sourceSubmission:actor:${authenticated.envelope.actorAddress.toLowerCase()}`,
+            ],
+          ] as const) {
+            const globalThrottle = await consumeConfiguredRateLimit({
+              backend: rateLimitBackend,
+              bucketKey,
+              buckets: sourceDuplicateCooldownBuckets,
+              pool,
+              response,
+              rule: rateLimitConfig.sourceSubmission,
+            });
+            if (!globalThrottle.allowed) {
+              await dependencies.markPublicWriteRequestRejected(
+                pool,
+                authenticated.acceptedRequestId,
+                `rate_limited:sourceSubmission:${dimension}`,
+              );
+              json(response, 429, {
+                error: "rate_limited",
+                retryAfterSeconds: globalThrottle.retryAfterSeconds,
+                scope: "sourceSubmission",
+              });
+              return true;
+            }
+          }
+        }
         const duplicateCooldownBucketKey = sourceDuplicateCooldownKey(
           "sourceSubmission",
           canonical.canonicalSourceKey,
           authenticated.envelope.actorAddress,
         );
-        const throttle = await consumeConfiguredRateLimit({
-          backend: rateLimitBackend,
-          bucketKey: duplicateCooldownBucketKey,
-          buckets: sourceDuplicateCooldownBuckets,
-          pool,
-          response,
-          rule: rateLimitConfig.sourceSubmission,
-        });
+        const throttle = authenticated.recordedReplay
+          ? { allowed: true, retryAfterSeconds: 0 }
+          : await consumeConfiguredRateLimit({
+              backend: rateLimitBackend,
+              bucketKey: duplicateCooldownBucketKey,
+              buckets: sourceDuplicateCooldownBuckets,
+              pool,
+              response,
+              rule: rateLimitConfig.sourceSubmission,
+            });
         if (!throttle.allowed) {
           await dependencies.markPublicWriteRequestRejected(
             pool,

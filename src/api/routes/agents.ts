@@ -23,7 +23,11 @@ import {
   parseTimestampParam,
   parseWebhookSubscriptionCreatePayload,
 } from "../params.js";
-import { consumeConfiguredRateLimit, sourceDuplicateCooldownKey } from "../rate-limit.js";
+import {
+  consumeConfiguredRateLimit,
+  requestClientKey,
+  sourceDuplicateCooldownKey,
+} from "../rate-limit.js";
 import {
   buildAgentControllerCount,
   buildAgentReviewCalibrationPayload,
@@ -877,6 +881,27 @@ export async function handleAgentActionRoutes(context: RouteContext): Promise<bo
     try {
       const payload = parseArtifactDraftPayload(authenticated.envelope.payload);
       const canonical = canonicalizeSourceDraft(payload);
+      for (const bucketKey of [
+        `agentSourceSubmission:client:${requestClientKey(request, rateLimitConfig.trustProxy)}`,
+        `agentSourceSubmission:actor:${authenticated.envelope.actorAddress.toLowerCase()}:agent:${authenticated.envelope.agentId}`,
+      ]) {
+        const globalThrottle = await consumeConfiguredRateLimit({
+          backend: rateLimitBackend,
+          bucketKey,
+          buckets: sourceDuplicateCooldownBuckets,
+          pool,
+          response,
+          rule: rateLimitConfig.agentSourceSubmission,
+        });
+        if (!globalThrottle.allowed) {
+          json(response, 429, {
+            error: "rate_limited",
+            retryAfterSeconds: globalThrottle.retryAfterSeconds,
+            scope: "agentSourceSubmission",
+          });
+          return true;
+        }
+      }
       const duplicateCooldownBucketKey = sourceDuplicateCooldownKey(
         "agentSourceSubmission",
         canonical.canonicalSourceKey,

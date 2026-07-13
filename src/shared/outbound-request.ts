@@ -1,6 +1,7 @@
 import { lookup as dnsLookupCallback } from "node:dns";
 import { isIP } from "node:net";
 import { promisify } from "node:util";
+import { Agent, type Dispatcher } from "undici";
 
 const dnsLookup = promisify(dnsLookupCallback);
 
@@ -43,6 +44,19 @@ export class OutboundResponseLimitError extends Error {
 }
 
 type LookupResult = { address: string; family: number };
+
+type PinnedLookupCallback = (
+  error: Error | null,
+  address: string | Array<{ address: string; family: number }>,
+  family?: number,
+) => void;
+
+function normalizeHostname(hostname: string): string {
+  return hostname
+    .toLowerCase()
+    .replace(/\.$/u, "")
+    .replace(/^\[|\]$/gu, "");
+}
 
 export type OutboundRequestPolicy = {
   allowPrivateNetworks?: boolean;
@@ -106,10 +120,10 @@ async function defaultLookup(hostname: string): Promise<LookupResult[]> {
   return results.map((result) => ({ address: result.address, family: result.family }));
 }
 
-export async function assertSafeOutboundUrl(
+function parseSafeOutboundUrl(
   rawUrl: string,
   policy: Pick<OutboundRequestPolicy, "allowPrivateNetworks" | "dnsLookup"> = {},
-): Promise<URL> {
+): URL {
   let url: URL;
   try {
     url = new URL(rawUrl);
@@ -122,10 +136,7 @@ export async function assertSafeOutboundUrl(
   if (url.username || url.password) {
     throw new UnsafeOutboundDestinationError("outbound destination must not contain credentials");
   }
-  const hostname = url.hostname
-    .toLowerCase()
-    .replace(/\.$/u, "")
-    .replace(/^\[|\]$/gu, "");
+  const hostname = normalizeHostname(url.hostname);
   if (isBlockedOutboundHostname(hostname) && !(policy.allowPrivateNetworks && isIP(hostname))) {
     throw new UnsafeOutboundDestinationError("outbound destination host is blocked");
   }
@@ -135,6 +146,16 @@ export async function assertSafeOutboundUrl(
   if (isIP(hostname)) {
     return url;
   }
+  return url;
+}
+
+export async function assertSafeOutboundUrl(
+  rawUrl: string,
+  policy: Pick<OutboundRequestPolicy, "allowPrivateNetworks" | "dnsLookup"> = {},
+): Promise<URL> {
+  const url = parseSafeOutboundUrl(rawUrl, policy);
+  const hostname = normalizeHostname(url.hostname);
+  if (policy.allowPrivateNetworks || isIP(hostname)) return url;
   const results = await (policy.dnsLookup ?? defaultLookup)(hostname);
   if (results.length === 0 || results.some((result) => isPrivateOrSpecialAddress(result.address))) {
     throw new UnsafeOutboundDestinationError(
@@ -142,6 +163,57 @@ export async function assertSafeOutboundUrl(
     );
   }
   return url;
+}
+
+export function createPinnedLookup(
+  expectedHostname: string,
+  addresses: LookupResult[],
+): (hostname: string, options: { all?: boolean }, callback: PinnedLookupCallback) => void {
+  const normalizedExpected = normalizeHostname(expectedHostname);
+  const pinned = addresses.map((result) => ({ ...result }));
+  return (hostname, options, callback) => {
+    const normalizedActual = normalizeHostname(hostname);
+    if (normalizedActual !== normalizedExpected || pinned.length === 0) {
+      callback(
+        new UnsafeOutboundDestinationError("outbound transport hostname was not validated"),
+        "",
+      );
+      return;
+    }
+    if (options.all) {
+      callback(null, pinned);
+      return;
+    }
+    const selected = pinned[0];
+    if (!selected) {
+      callback(new UnsafeOutboundDestinationError("outbound transport has no pinned address"), "");
+      return;
+    }
+    callback(null, selected.address, selected.family);
+  };
+}
+
+async function resolveSafeOutboundTarget(
+  rawUrl: string,
+  policy: OutboundRequestPolicy,
+): Promise<{ addresses: LookupResult[]; url: URL }> {
+  const url = parseSafeOutboundUrl(rawUrl, policy);
+  const hostname = normalizeHostname(url.hostname);
+  const addresses = isIP(hostname)
+    ? [{ address: hostname, family: isIP(hostname) }]
+    : await (policy.dnsLookup ?? defaultLookup)(hostname);
+  if (addresses.length === 0) {
+    throw new UnsafeOutboundDestinationError("outbound destination has no resolved address");
+  }
+  if (
+    !policy.allowPrivateNetworks &&
+    addresses.some((entry) => isPrivateOrSpecialAddress(entry.address))
+  ) {
+    throw new UnsafeOutboundDestinationError(
+      "outbound destination resolves to a private or special address",
+    );
+  }
+  return { addresses, url };
 }
 
 async function readBoundedBody(response: Response, maxBytes: number): Promise<Buffer> {
@@ -189,28 +261,39 @@ export async function fetchBoundedOutbound(
   let currentUrl = rawUrl;
   try {
     for (let redirects = 0; ; redirects += 1) {
-      const validated = await assertSafeOutboundUrl(currentUrl, policy);
-      const response = await fetchImpl(validated, {
-        ...init,
-        method: policy.method ?? init.method,
-        redirect: "manual",
-        signal: controller.signal,
+      const target = await resolveSafeOutboundTarget(currentUrl, policy);
+      const dispatcher: Dispatcher = new Agent({
+        connect: {
+          lookup: createPinnedLookup(target.url.hostname, target.addresses),
+        },
       });
-      if ([301, 302, 303, 307, 308].includes(response.status)) {
-        const location = response.headers.get("location");
-        if (!location)
-          throw new UnsafeOutboundDestinationError("outbound redirect is missing a location");
-        if (redirects >= maxRedirects)
-          throw new UnsafeOutboundDestinationError("outbound redirect limit exceeded");
-        currentUrl = new URL(location, validated).toString();
-        continue;
+      try {
+        const response = await fetchImpl(target.url, {
+          ...init,
+          dispatcher,
+          method: policy.method ?? init.method,
+          redirect: "manual",
+          signal: controller.signal,
+        } as RequestInit & { dispatcher: Dispatcher });
+        if ([301, 302, 303, 307, 308].includes(response.status)) {
+          const location = response.headers.get("location");
+          if (!location)
+            throw new UnsafeOutboundDestinationError("outbound redirect is missing a location");
+          if (redirects >= maxRedirects)
+            throw new UnsafeOutboundDestinationError("outbound redirect limit exceeded");
+          await response.body?.cancel();
+          currentUrl = new URL(location, target.url).toString();
+          continue;
+        }
+        return {
+          body: await readBoundedBody(response, maxBytes),
+          finalUrl: target.url.toString(),
+          headers: response.headers,
+          status: response.status,
+        };
+      } finally {
+        await dispatcher.close();
       }
-      return {
-        body: await readBoundedBody(response, maxBytes),
-        finalUrl: validated.toString(),
-        headers: response.headers,
-        status: response.status,
-      };
     }
   } finally {
     clearTimeout(timer);

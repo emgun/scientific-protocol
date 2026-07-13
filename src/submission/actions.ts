@@ -1,4 +1,3 @@
-import type { EventLog } from "ethers";
 import type { Pool } from "pg";
 import type { ArtifactDraftInput } from "../artifacts/ingestion.js";
 import {
@@ -31,6 +30,7 @@ type ProductionClaimOptions = {
     createClaimTxHash: string;
   }) => Promise<void>;
   onClaimReady?: (checkpoint: ProductionClaimReadyCheckpoint) => Promise<void>;
+  assertExecutionLease?: () => Promise<void>;
 };
 
 export type ProductionClaimInput = {
@@ -200,63 +200,66 @@ async function createProductionClaimLocked(
   const predictionHooks = resolveNonEmptyStringInput(input.predictionHooks, "production-hooks");
 
   const requestCommitment = options.requestHash?.toLowerCase();
-  const latestBlock = await claimRegistryAsSubmitter.runner?.provider?.getBlockNumber();
-  if (requestCommitment && latestBlock === undefined) {
-    throw new Error("claim reconciliation requires a provider-backed contract");
-  }
-  const searchFrom = Math.max(
-    deployment.deploymentBlock,
-    (latestBlock ?? deployment.deploymentBlock) -
-      resolveIntegerInput(
-        Number(env.SP_CLAIM_RECONCILIATION_MAX_BLOCKS ?? 50_000),
-        50_000,
-        "SP_CLAIM_RECONCILIATION_MAX_BLOCKS",
-        { min: 1 },
-      ),
-  );
-  const claimEvents = requestCommitment
-    ? await claimRegistryAsSubmitter.queryFilter(
-        claimRegistryAsSubmitter.filters.ClaimCreated(null, authorAddress),
-        searchFrom,
-        latestBlock,
-      )
-    : [];
-  const existingClaimEvent = claimEvents.find(
-    (event): event is EventLog =>
-      "args" in event && event.args.metadataHash.toLowerCase() === requestCommitment,
-  );
+  const existingRequestClaimId = requestCommitment
+    ? await claimRegistryAsSubmitter.getDelegatedClaimIdByRequestHash(requestCommitment)
+    : 0n;
 
   const saga = await runClaimCreationSaga({
     faultInjection: options.faultInjection,
     findClaim: async () =>
-      existingClaimEvent
+      existingRequestClaimId !== 0n
         ? {
-            claimId: existingClaimEvent.args.claimId.toString(),
-            txHash: existingClaimEvent.transactionHash,
+            claimId: existingRequestClaimId.toString(),
+            txHash: "0x",
           }
         : null,
     createClaim: async () => {
-      const createTx = await claimRegistryAsSubmitter.createClaimOnBehalf(
-        {
-          statementHash: keccakText(statement),
-          methodologyHash: keccakText(methodology),
-          scopeHash: keccakText(scope),
-          metadataHash: requestCommitment ?? keccakText(metadata),
-          predictionHooksHash: keccakText(predictionHooks),
-          domainId: BigInt(domainId),
-          author: authorAddress,
-        },
-        authorBond,
-        "0x0000000000000000000000000000000000000000",
-      );
+      await options.assertExecutionLease?.();
+      const createTx = requestCommitment
+        ? await claimRegistryAsSubmitter.createClaimOnBehalfWithRequestHash(
+            {
+              statementHash: keccakText(statement),
+              methodologyHash: keccakText(methodology),
+              scopeHash: keccakText(scope),
+              metadataHash: requestCommitment,
+              predictionHooksHash: keccakText(predictionHooks),
+              domainId: BigInt(domainId),
+              author: authorAddress,
+            },
+            authorBond,
+            "0x0000000000000000000000000000000000000000",
+            requestCommitment,
+          )
+        : await claimRegistryAsSubmitter.createClaimOnBehalf(
+            {
+              statementHash: keccakText(statement),
+              methodologyHash: keccakText(methodology),
+              scopeHash: keccakText(scope),
+              metadataHash: requestCommitment ?? keccakText(metadata),
+              predictionHooksHash: keccakText(predictionHooks),
+              domainId: BigInt(domainId),
+              author: authorAddress,
+            },
+            authorBond,
+            "0x0000000000000000000000000000000000000000",
+          );
       const receipt = await createTx.wait();
-      const claimId = extractContractEventId(
+      const emittedClaimId = extractContractEventId(
         claimRegistryAsSubmitter,
         receipt,
         "ClaimCreated",
         "claimId",
       );
-      if (!claimId) throw new Error(`claim transaction ${receipt.hash} did not emit ClaimCreated`);
+      const claimId =
+        emittedClaimId ??
+        (requestCommitment
+          ? (
+              await claimRegistryAsSubmitter.getDelegatedClaimIdByRequestHash(requestCommitment)
+            ).toString()
+          : null);
+      if (!claimId || claimId === "0") {
+        throw new Error(`claim transaction ${receipt.hash} did not establish a delegated claim`);
+      }
       return { claimId, txHash: receipt.hash };
     },
     checkpoint: async (claimId, txHash) => {
@@ -270,17 +273,13 @@ async function createProductionClaimLocked(
           artifact.contentDigest.toLowerCase() === verifiedArtifact.contentDigest.toLowerCase() &&
           artifact.uri === input.artifactUri.trim()
         ) {
-          const events = await artifactRegistry.queryFilter(
-            artifactRegistry.filters.ArtifactAdded(id, BigInt(claimId)),
-            searchFrom,
-            latestBlock,
-          );
-          return { artifactId: id.toString(), txHash: events[0]?.transactionHash ?? "0x" };
+          return { artifactId: id.toString(), txHash: "0x" };
         }
       }
       return null;
     },
     attachArtifact: async (claimId) => {
+      await options.assertExecutionLease?.();
       const tx = await artifactRegistry.addArtifact(
         BigInt(claimId),
         BigInt(artifactType),

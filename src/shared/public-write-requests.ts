@@ -231,6 +231,39 @@ export async function reservePublicWriteRequestExecution(
   return result.rowCount === 1;
 }
 
+export async function renewPublicWriteRequestExecution(
+  queryable: Queryable,
+  input: { leaseMs: number; leaseOwner: string; requestId: string },
+): Promise<boolean> {
+  const result = await queryable.query(
+    `UPDATE public_write_requests
+     SET execution_lease_expires_at = NOW() + ($3::text || ' milliseconds')::interval,
+         updated_at = NOW()
+     WHERE request_id = $1
+       AND execution_lease_owner = $2
+       AND execution_lease_expires_at > NOW()`,
+    [input.requestId, input.leaseOwner, input.leaseMs],
+  );
+  return result.rowCount === 1;
+}
+
+export async function assertPublicWriteRequestExecution(
+  queryable: Queryable,
+  input: { leaseOwner: string; requestId: string },
+): Promise<void> {
+  const result = await queryable.query(
+    `SELECT 1
+     FROM public_write_requests
+     WHERE request_id = $1
+       AND execution_lease_owner = $2
+       AND execution_lease_expires_at > NOW()`,
+    [input.requestId, input.leaseOwner],
+  );
+  if (result.rowCount !== 1) {
+    throw new Error("public_write_request_execution_lease_lost");
+  }
+}
+
 export async function releasePublicWriteRequestExecution(
   queryable: Queryable,
   input: { leaseOwner: string; requestId: string },

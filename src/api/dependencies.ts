@@ -118,12 +118,14 @@ import {
 import { getProvider, getRpcUrl } from "../shared/contracts.js";
 import { readOperatorRequest, readOperatorRequestsPage } from "../shared/operator-requests.js";
 import {
+  assertPublicWriteRequestExecution,
   insertPublicWriteRequest,
   markPublicWriteRequestAccepted,
   markPublicWriteRequestPending,
   markPublicWriteRequestRejected,
   readPublicWriteRequestByHash,
   releasePublicWriteRequestExecution,
+  renewPublicWriteRequestExecution,
   reservePublicWriteRequestExecution,
 } from "../shared/public-write-requests.js";
 import { readEnvValue } from "../shared/secrets.js";
@@ -182,7 +184,9 @@ export type ApiDependencies = {
   markPublicWriteRequestRejected: typeof markPublicWriteRequestRejected;
   readPublicWriteRequestByHash: typeof readPublicWriteRequestByHash;
   releasePublicWriteRequestExecution: typeof releasePublicWriteRequestExecution;
+  renewPublicWriteRequestExecution: typeof renewPublicWriteRequestExecution;
   reservePublicWriteRequestExecution: typeof reservePublicWriteRequestExecution;
+  assertPublicWriteRequestExecution: typeof assertPublicWriteRequestExecution;
   openDefaultReviewTasksForClaim: typeof openDefaultReviewTasksForClaim;
   openDemoReplicationJob: typeof openDemoReplicationJob;
   processDemoReplicationJob: typeof processDemoReplicationJob;
@@ -348,7 +352,9 @@ export const defaultDependencies: ApiDependencies = {
   markPublicWriteRequestRejected,
   readPublicWriteRequestByHash,
   releasePublicWriteRequestExecution,
+  renewPublicWriteRequestExecution,
   reservePublicWriteRequestExecution,
+  assertPublicWriteRequestExecution,
   openDefaultReviewTasksForClaim,
   openDemoReplicationJob,
   processDemoReplicationJob,

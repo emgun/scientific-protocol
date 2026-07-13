@@ -170,6 +170,7 @@ export async function authenticateSignedPublicWriteRequest(
   expected: {
     actionType: PublicWriteActionType | PublicWriteActionType[];
     allowRecordedReplay?: boolean;
+    allowRecordedReplayActionTypes?: PublicWriteActionType[];
     chainId: number;
     scopeKey?: string;
     scopeKeyValidator?: (scopeKey: string, envelope: PublicWriteEnvelope) => boolean;
@@ -177,6 +178,7 @@ export async function authenticateSignedPublicWriteRequest(
 ): Promise<{
   acceptedRequestId: string;
   envelope: PublicWriteEnvelope;
+  recordedReplay: boolean;
   requestHash: string;
   signature: string;
 }> {
@@ -191,6 +193,7 @@ export async function authenticateSignedPublicWriteRequestBody(
   expected: {
     actionType: PublicWriteActionType | PublicWriteActionType[];
     allowRecordedReplay?: boolean;
+    allowRecordedReplayActionTypes?: PublicWriteActionType[];
     chainId: number;
     scopeKey?: string;
     scopeKeyValidator?: (scopeKey: string, envelope: PublicWriteEnvelope) => boolean;
@@ -198,6 +201,7 @@ export async function authenticateSignedPublicWriteRequestBody(
 ): Promise<{
   acceptedRequestId: string;
   envelope: PublicWriteEnvelope;
+  recordedReplay: boolean;
   requestHash: string;
   signature: string;
 }> {
@@ -218,13 +222,17 @@ export async function authenticateSignedPublicWriteRequestBody(
     throw new Error("public_write_scope_mismatch");
   }
   const { requestHash } = verifyPublicWriteEnvelope(signed);
-  const recorded = expected.allowRecordedReplay
+  const allowRecordedReplay =
+    expected.allowRecordedReplay === true ||
+    expected.allowRecordedReplayActionTypes?.includes(envelope.actionType) === true;
+  const recorded = allowRecordedReplay
     ? await dependencies.readPublicWriteRequestByHash(pool, requestHash)
     : undefined;
   if (recorded) {
     return {
       acceptedRequestId: recorded.requestId,
       envelope,
+      recordedReplay: true,
       requestHash,
       signature,
     };
@@ -238,6 +246,7 @@ export async function authenticateSignedPublicWriteRequestBody(
     throw new Error("public_write_request_expired");
   }
   let acceptedRequestId = "";
+  let recordedReplay = false;
   try {
     const accepted = await dependencies.insertPublicWriteRequest(pool, {
       actionType: envelope.actionType,
@@ -254,11 +263,12 @@ export async function authenticateSignedPublicWriteRequestBody(
   } catch (error) {
     const code = (error as { code?: string }).code;
     if (code === "23505") {
-      const existing = expected.allowRecordedReplay
+      const existing = allowRecordedReplay
         ? await dependencies.readPublicWriteRequestByHash(pool, requestHash)
         : undefined;
       if (existing) {
         acceptedRequestId = existing.requestId;
+        recordedReplay = true;
       } else {
         // Same actor/nonce with different signed bytes is never resumable.
         throw new Error("public_write_request_duplicate");
@@ -270,6 +280,7 @@ export async function authenticateSignedPublicWriteRequestBody(
   return {
     acceptedRequestId,
     envelope,
+    recordedReplay,
     requestHash,
     signature,
   };

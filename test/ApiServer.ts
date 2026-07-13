@@ -80,6 +80,7 @@ const TEST_ROLE_HASH = {
 function createDependencyOverrides(
   overrides: Partial<ApiDependencies> = {},
 ): Partial<ApiDependencies> {
+  const publicWriteRequests = new Map<string, PublicWriteRequestView>();
   const replicationJobs: ReplicationJobView[] = [
     {
       jobId: "1",
@@ -1584,10 +1585,14 @@ function createDependencyOverrides(
         createdAt: "2026-03-11T00:11:40.000Z",
         updatedAt: "2026-03-11T00:11:40.000Z",
       };
+      publicWriteRequests.set(request.requestHash, request);
       return request;
     },
-    readPublicWriteRequestByHash: async () => undefined,
+    readPublicWriteRequestByHash: async (_pool, requestHash) =>
+      publicWriteRequests.get(requestHash),
     reservePublicWriteRequestExecution: async () => true,
+    renewPublicWriteRequestExecution: async () => true,
+    assertPublicWriteRequestExecution: async () => {},
     releasePublicWriteRequestExecution: async () => {},
     markPublicWriteRequestAccepted: async (_pool, requestId, outcomeDetail) => ({
       requestId,
@@ -4811,6 +4816,52 @@ describe("ApiServer", () => {
     }
   });
 
+  it("resumes an exact source-submit replay after request insertion without re-throttling", async () => {
+    const wallet = Wallet.createRandom();
+    let attempts = 0;
+    const { baseUrl, close } = await startServer(
+      {
+        createProductionArtifactDraft: async () => {
+          attempts += 1;
+          if (attempts === 1) throw new Error("fault_after_request_insert");
+          return {
+            source: { sourceId: "7" },
+            submissionOutcome: "created",
+          } as never;
+        },
+      },
+      {
+        rateLimitConfig: {
+          sourceSubmission: { maxRequests: 1, windowMs: 60_000 },
+        } as PartialApiRateLimitConfig,
+      },
+    );
+    try {
+      const signed = await buildSignedPublicWriteBody(wallet, {
+        actionType: "source_submit",
+        actorAddress: wallet.address,
+        chainId: 31337,
+        issuedAt: new Date().toISOString(),
+        payload: { sourceType: "url", sourceUrl: "https://example.com/resumable.pdf" },
+        requestNonce: "source-resume-after-insert",
+        scopeKey: `submit:${wallet.address.toLowerCase()}`,
+      });
+      const submit = () =>
+        fetch(`${baseUrl}/sources`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(signed),
+        });
+      expect((await submit()).status).to.equal(500);
+      const replay = await submit();
+      expect(replay.status).to.equal(200);
+      expect((await replay.json()).result.source.sourceId).to.equal("7");
+      expect(attempts).to.equal(2);
+    } finally {
+      await close();
+    }
+  });
+
   it("rate-limits repeated public source submissions under a dedicated source scope", async () => {
     const wallet = Wallet.createRandom();
     let createCalls = 0;
@@ -4892,25 +4943,31 @@ describe("ApiServer", () => {
     );
 
     try {
+      const firstSigned = await buildSignedPublicWriteBody(wallet, {
+        actionType: "source_submit",
+        actorAddress: wallet.address,
+        chainId: 31337,
+        issuedAt: new Date().toISOString(),
+        payload: {
+          sourceType: "url",
+          sourceUrl: "https://doi.org/10.48550/arxiv.2405.15793",
+        },
+        requestNonce: "nonce-source-1",
+        scopeKey: `submit:${wallet.address.toLowerCase()}`,
+      });
       const firstResponse = await fetch(`${baseUrl}/sources`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(
-          await buildSignedPublicWriteBody(wallet, {
-            actionType: "source_submit",
-            actorAddress: wallet.address,
-            chainId: 31337,
-            issuedAt: new Date().toISOString(),
-            payload: {
-              sourceType: "url",
-              sourceUrl: "https://doi.org/10.48550/arxiv.2405.15793",
-            },
-            requestNonce: "nonce-source-1",
-            scopeKey: `submit:${wallet.address.toLowerCase()}`,
-          }),
-        ),
+        body: JSON.stringify(firstSigned),
       });
       expect(firstResponse.status).to.equal(200);
+
+      const replayResponse = await fetch(`${baseUrl}/sources`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(firstSigned),
+      });
+      expect(replayResponse.status).to.equal(200);
 
       const secondResponse = await fetch(`${baseUrl}/sources`, {
         method: "POST",
@@ -4923,7 +4980,7 @@ describe("ApiServer", () => {
             issuedAt: new Date().toISOString(),
             payload: {
               sourceType: "url",
-              sourceUrl: "doi:10.48550/arxiv.2405.15793",
+              sourceUrl: "https://example.com/a-different-source.pdf",
             },
             requestNonce: "nonce-source-2",
             scopeKey: `submit:${wallet.address.toLowerCase()}`,
@@ -4958,7 +5015,7 @@ describe("ApiServer", () => {
         retryAfterSeconds: 60,
         scope: "sourceSubmission",
       });
-      expect(createCalls).to.equal(1);
+      expect(createCalls).to.equal(2);
     } finally {
       await close();
     }
