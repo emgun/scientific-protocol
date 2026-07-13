@@ -115,8 +115,10 @@ claim-local replication, derives its recipient from that replication's submitter
 released before the replication is resolved. An operational bounty settler may reserve and release
 that deterministic payout, but only the timelocked escrow administrator may terminally cancel a
 mistaken reservation. Author-bond refunds derive the claim author and slashes derive the immutable
-protocol treasury; callers cannot redirect either transfer. These constraints protect accounting
-and binding; they do not define which scientific outcomes deserve payment.
+protocol treasury. A refund governance action only credits the recorded author; the author later
+pulls that credit to a chosen valid recipient. Administrators cannot redirect either value path,
+and a reverting author contract cannot block the refund-credit action. These constraints protect
+accounting and binding; they do not define which scientific outcomes deserve payment.
 
 The resolver path now records resolution only. Reward movement is handled by the claim reward
 vault and explicit reward settlement.

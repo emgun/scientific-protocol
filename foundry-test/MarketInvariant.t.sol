@@ -113,6 +113,18 @@ contract MarketHandler is Test {
         market.settleForecast(forecastId, resolutionDecisionId);
     }
 
+    function forfeitUnrevealedForecast(uint256 forecastSeed) external {
+        uint256 forecastId = _pickForecast(forecastSeed);
+        if (forecastId == 0) {
+            return;
+        }
+        EpistemicMarket.ForecastCommitment memory forecast = market.getForecast(forecastId);
+        if (forecast.settled || forecast.revealed || block.timestamp <= forecast.revealDeadline) {
+            return;
+        }
+        market.forfeitUnrevealedForecast(forecastId);
+    }
+
     function reclaimForecast(uint256 forecastSeed) external {
         uint256 forecastId = _pickForecast(forecastSeed);
         if (forecastId == 0) {

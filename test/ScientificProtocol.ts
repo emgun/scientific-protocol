@@ -1218,6 +1218,115 @@ describe("ScientificProtocol", () => {
     assert.equal(await protocol.epistemicMarket.rewardPoolBalance(), poolBefore + forecastStake);
   });
 
+  it("permissionlessly forfeits an expired unrevealed forecast without a claim decision", async () => {
+    const protocol = await deployProtocol();
+    await (
+      await protocol.claimRegistry
+        .connect(protocol.author)
+        .createClaim(
+          makeClaimSummary(protocol.author.address, 1n),
+          ethers.parseEther("0.5"),
+          ethers.ZeroAddress,
+        )
+    ).wait();
+
+    const salt = ethers.keccak256(ethers.toUtf8Bytes("permissionless-forfeit"));
+    const encoded = ethers.AbiCoder.defaultAbiCoder().encode(
+      ["uint8", "uint16", "bytes32"],
+      [FORECAST_DIRECTION.Refutes, 7_500, salt],
+    );
+    const latestBlock = await ethers.provider.getBlock("latest");
+    assert.ok(latestBlock);
+    const stake = ethers.parseEther("0.75");
+    await (
+      await protocol.epistemicMarket
+        .connect(protocol.author)
+        .commitForecast(1, ethers.keccak256(encoded), BigInt(latestBlock.timestamp + 60), 0, {
+          value: stake,
+        })
+    ).wait();
+
+    await assert.rejects(
+      protocol.epistemicMarket.connect(protocol.other).forfeitUnrevealedForecast(1),
+      /EpistemicMarketRevealWindowOpen/,
+    );
+    await ethers.provider.send("evm_increaseTime", [61]);
+    await ethers.provider.send("evm_mine", []);
+
+    const tx = await protocol.epistemicMarket.connect(protocol.other).forfeitUnrevealedForecast(1);
+    const receipt = await tx.wait();
+    const parsedLogs = receipt?.logs.flatMap((log) => {
+      try {
+        const parsed = protocol.epistemicMarket.interface.parseLog(log);
+        return parsed ? [parsed] : [];
+      } catch {
+        return [];
+      }
+    });
+    const forfeitLog = parsedLogs?.find((log) => log.name === "ForecastForfeited");
+    const settledLog = parsedLogs?.find((log) => log.name === "ForecastSettled");
+    assert.ok(forfeitLog);
+    assert.equal(forfeitLog.args.forecastId, 1n);
+    assert.equal(forfeitLog.args.forecaster, protocol.author.address);
+    assert.equal(forfeitLog.args.forfeitedAmount, stake);
+    assert.equal(forfeitLog.args.actor, protocol.other.address);
+    assert.ok(settledLog);
+    assert.equal(settledLog.args.resolutionDecisionId, 0n);
+    assert.equal(settledLog.args.finalStatus, BigInt(RESOLUTION_STATUS.Pending));
+    assert.equal(settledLog.args.matched, false);
+    assert.equal(settledLog.args.payoutAmount, 0n);
+    assert.equal(await protocol.claimRegistry.getEffectiveResolutionDecisionId(1), 0n);
+    assert.equal(await protocol.epistemicMarket.rewardPoolBalance(), stake);
+    assert.equal((await protocol.epistemicMarket.getForecast(1)).settled, true);
+
+    await assert.rejects(
+      protocol.epistemicMarket.connect(protocol.admin).forfeitUnrevealedForecast(1),
+      /EpistemicMarketAlreadySettled/,
+    );
+    await assert.rejects(
+      protocol.epistemicMarket.connect(protocol.admin).settleForecast(1, 0),
+      /EpistemicMarketAlreadySettled/,
+    );
+  });
+
+  it("does not forfeit a forecast that was revealed on time", async () => {
+    const protocol = await deployProtocol();
+    await (
+      await protocol.claimRegistry
+        .connect(protocol.author)
+        .createClaim(
+          makeClaimSummary(protocol.author.address, 1n),
+          ethers.parseEther("0.5"),
+          ethers.ZeroAddress,
+        )
+    ).wait();
+    const salt = ethers.keccak256(ethers.toUtf8Bytes("revealed-not-forfeitable"));
+    const encoded = ethers.AbiCoder.defaultAbiCoder().encode(
+      ["uint8", "uint16", "bytes32"],
+      [FORECAST_DIRECTION.Supports, 8_000, salt],
+    );
+    const latestBlock = await ethers.provider.getBlock("latest");
+    assert.ok(latestBlock);
+    await (
+      await protocol.epistemicMarket
+        .connect(protocol.author)
+        .commitForecast(1, ethers.keccak256(encoded), BigInt(latestBlock.timestamp + 60), 0, {
+          value: ethers.parseEther("0.25"),
+        })
+    ).wait();
+    await (
+      await protocol.epistemicMarket
+        .connect(protocol.author)
+        .revealForecast(1, FORECAST_DIRECTION.Supports, 8_000, salt)
+    ).wait();
+    await ethers.provider.send("evm_increaseTime", [61]);
+    await ethers.provider.send("evm_mine", []);
+    await assert.rejects(
+      protocol.epistemicMarket.connect(protocol.other).forfeitUnrevealedForecast(1),
+      /EpistemicMarketAlreadyRevealed/,
+    );
+  });
+
   it("lets a revealed forecaster reclaim their stake only after the settler-inactivity delay", async () => {
     const protocol = await deployProtocol();
     await (
@@ -2046,6 +2155,11 @@ describe("ScientificProtocol", () => {
         .connect(protocol.admin)
         .refundAuthorBond(1, ethers.parseEther("0.05"))
     ).wait();
+    await (
+      await protocol.bondEscrow
+        .connect(protocol.author)
+        .withdrawAuthorBondRefund(ethers.parseEther("0.05"), protocol.author.address)
+    ).wait();
 
     await (await protocol.bondEscrow.connect(protocol.other).setDepositsPaused(false)).wait();
     await (
@@ -2534,6 +2648,121 @@ describe("ScientificProtocol", () => {
     );
   });
 
+  it("credits author-bond refunds for pull withdrawal by a rejecting contract author", async () => {
+    const protocol = await deployProtocol();
+    const BondRefundActor = await ethers.getContractFactory(
+      "contracts/mocks/BondRefundActor.sol:BondRefundActor",
+    );
+    const contractAuthor = await BondRefundActor.deploy(await protocol.bondEscrow.getAddress());
+    await contractAuthor.waitForDeployment();
+    await (await contractAuthor.setReceiveBehavior(true, false)).wait();
+
+    const contractAuthorAddress = await contractAuthor.getAddress();
+    const bond = ethers.parseEther("0.6");
+    await (
+      await protocol.claimRegistry
+        .connect(protocol.admin)
+        .createClaimOnBehalf(makeClaimSummary(contractAuthorAddress, 1n), bond, ethers.ZeroAddress)
+    ).wait();
+    await (await contractAuthor.depositAuthorBond(1, { value: bond })).wait();
+
+    const creditAmount = ethers.parseEther("0.4");
+    const creditReceipt = await (
+      await protocol.bondEscrow.connect(protocol.admin).refundAuthorBond(1, creditAmount)
+    ).wait();
+    const creditLog = creditReceipt?.logs
+      .map((log) => {
+        try {
+          return protocol.bondEscrow.interface.parseLog(log);
+        } catch {
+          return null;
+        }
+      })
+      .find((log) => log?.name === "AuthorBondRefundCredited");
+    assert.ok(creditLog);
+    assert.equal(creditLog.args.claimId, 1n);
+    assert.equal(creditLog.args.author, contractAuthorAddress);
+    assert.equal(creditLog.args.amount, creditAmount);
+    assert.equal(await protocol.bondEscrow.authorBondBalances(1), bond - creditAmount);
+    assert.equal(
+      await protocol.bondEscrow.authorRefundCredits(contractAuthorAddress),
+      creditAmount,
+    );
+
+    const recipientBefore = await ethers.provider.getBalance(protocol.other.address);
+    const withdrawalReceipt = await (
+      await contractAuthor.withdrawAuthorBondRefund(creditAmount, protocol.other.address)
+    ).wait();
+    const withdrawalLog = withdrawalReceipt?.logs
+      .map((log) => {
+        try {
+          return protocol.bondEscrow.interface.parseLog(log);
+        } catch {
+          return null;
+        }
+      })
+      .find((log) => log?.name === "AuthorBondRefundWithdrawn");
+    assert.ok(withdrawalLog);
+    assert.equal(withdrawalLog.args.author, contractAuthorAddress);
+    assert.equal(withdrawalLog.args.recipient, protocol.other.address);
+    assert.equal(withdrawalLog.args.amount, creditAmount);
+    assert.equal(await protocol.bondEscrow.authorRefundCredits(contractAuthorAddress), 0n);
+    assert.equal(
+      await ethers.provider.getBalance(protocol.other.address),
+      recipientBefore + creditAmount,
+    );
+  });
+
+  it("uses CEI and reentrancy protection for author-bond refund withdrawals", async () => {
+    const protocol = await deployProtocol();
+    const bond = ethers.parseEther("0.5");
+    const BondRefundActor = await ethers.getContractFactory(
+      "contracts/mocks/BondRefundActor.sol:BondRefundActor",
+    );
+    const contractAuthor = await BondRefundActor.deploy(await protocol.bondEscrow.getAddress());
+    await contractAuthor.waitForDeployment();
+    const contractAuthorAddress = await contractAuthor.getAddress();
+    await (
+      await protocol.claimRegistry
+        .connect(protocol.admin)
+        .createClaimOnBehalf(makeClaimSummary(contractAuthorAddress, 1n), bond, ethers.ZeroAddress)
+    ).wait();
+    await (await contractAuthor.depositAuthorBond(1, { value: bond })).wait();
+
+    const creditAmount = ethers.parseEther("0.3");
+    await (
+      await protocol.bondEscrow.connect(protocol.admin).refundAuthorBond(1, creditAmount)
+    ).wait();
+    await (await contractAuthor.setReceiveBehavior(false, true)).wait();
+
+    await assert.rejects(
+      protocol.bondEscrow
+        .connect(protocol.other)
+        .withdrawAuthorBondRefund(1, protocol.other.address),
+      /BondEscrowInsufficientAuthorRefundCredit/,
+    );
+    await assert.rejects(
+      contractAuthor.withdrawAuthorBondRefund(0, protocol.other.address),
+      /BondEscrowInvalidAmount/,
+    );
+    await assert.rejects(
+      contractAuthor.withdrawAuthorBondRefund(creditAmount, ethers.ZeroAddress),
+      /BondEscrowInvalidRecipient/,
+    );
+
+    await (
+      await contractAuthor.withdrawAuthorBondRefund(creditAmount, contractAuthorAddress)
+    ).wait();
+    assert.equal(await contractAuthor.reentryAttempted(), true);
+    assert.equal(await contractAuthor.reentrySucceeded(), false);
+    assert.equal(await protocol.bondEscrow.authorRefundCredits(contractAuthorAddress), 0n);
+    assert.equal(await ethers.provider.getBalance(contractAuthorAddress), creditAmount);
+    await assert.rejects(
+      contractAuthor.withdrawAuthorBondRefund(1, protocol.author.address),
+      /BondEscrowInsufficientAuthorRefundCredit/,
+    );
+  });
+
   it("separates operational bounty settlement from timelocked bond custody", async () => {
     const protocol = await deployProtocol();
     const bondAmount = ethers.parseEther("1");
@@ -2592,16 +2821,21 @@ describe("ScientificProtocol", () => {
       treasuryBefore + ethers.parseEther("0.1"),
     );
 
-    const authorBefore = await ethers.provider.getBalance(protocol.author.address);
     await (
       await protocol.bondEscrow
         .connect(protocol.admin)
         .refundAuthorBond(1, ethers.parseEther("0.1"))
     ).wait();
     assert.equal(
-      await ethers.provider.getBalance(protocol.author.address),
-      authorBefore + ethers.parseEther("0.1"),
+      await protocol.bondEscrow.authorRefundCredits(protocol.author.address),
+      ethers.parseEther("0.1"),
     );
+    await (
+      await protocol.bondEscrow
+        .connect(protocol.author)
+        .withdrawAuthorBondRefund(ethers.parseEther("0.1"), protocol.other.address)
+    ).wait();
+    assert.equal(await protocol.bondEscrow.authorRefundCredits(protocol.author.address), 0n);
   });
 
   it("rejects unknown escrow records and zero-address agent budget recipients", async () => {

@@ -31,9 +31,9 @@ not the authority boundary.
   value-moving paths.
 - Value transfers occur after state updates in those contracts.
 - The unified reward layer uses pull-based recipient withdrawals through `ClaimRewardVault`.
-- `BondEscrow` still retains older push-style bond and bounty release paths for legacy escrow
-  flows. Production hardening should keep narrowing those remaining push-style paths or define a
-  stricter recipient-failure policy around them.
+- Author-bond refunds use pull-based credits in `BondEscrow`; the timelocked escrow administrator
+  cannot choose the withdrawal recipient. Legacy replication bounty releases and treasury slashes
+  remain push transfers to recipients fixed by immutable protocol state.
 
 ### Authorization and write attribution
 
@@ -58,12 +58,17 @@ not the authority boundary.
   is derived from the replication submitter instead of supplied by the escrow administrator.
 - Reserved bounty can be released only after the replication has a recorded resolution. An escrow
   administrator can terminally cancel an unreleased reservation without moving value.
-- Author bond slash and refund paths cannot exceed the tracked bond balance.
+- Author bond slash and refund-credit paths cannot exceed the tracked bond balance. Credited value
+  can be withdrawn only by that author, uses checks-effects-interactions plus `nonReentrant`, and
+  can be routed to a valid recipient if the author contract rejects ETH.
 - Reward settlements now have explicit settlement entries and pull-based withdrawal paths in the
   newer unified reward layer.
 - Forecast settlement requires the reveal window to be closed for unrevealed forecasts, and
   unrevealed forecasts always forfeit their stake to the reward pool. Refunding them would allow
   committing opposite forecasts and revealing only the winner.
+- Unrevealed forecasts have a permissionless terminal forfeit after the reveal deadline. It does
+  not depend on settler availability or a newer claim decision, emits the canonical pending/no-
+  decision settlement record, and cannot run twice.
 - Revealed forecasts that the settler never settles can be reclaimed (stake only, no bonus) after
   a long settler-inactivity delay.
 - Challenge bonds stay committed for a minimum challenge duration, so a challenger cannot rescue a
@@ -89,7 +94,8 @@ not the authority boundary.
   known outcomes cannot extract bonuses and later weaker evidence cannot reverse value settlement.
 - Operational `BOUNTY_SETTLER_ROLE` authority is limited to replication-bound reserve and release.
   Timelocked `ESCROW_ADMIN_ROLE` controls terminal cancellation and author-bond movement; refunds
-  are fixed to the claim author and slashes are fixed to the immutable protocol treasury.
+  are credited to the claim author and slashes are fixed to the immutable protocol treasury. The
+  author, not the administrator, selects a refund withdrawal recipient.
 - Delegated claim creation binds each signed request hash to one onchain claim id. Renewable service
   leases fence stale workers before chain writes; the onchain mapping is the final duplicate barrier.
 - Outbound HTTP transport pins every redirect hop to the exact DNS addresses that passed validation.
@@ -159,8 +165,8 @@ not the authority boundary.
 ### Still recommended before public production rollout
 
 - independent contract and property review
-- further reduction of legacy `BondEscrow` push-style release reliance, or a stronger
-  recipient-failure policy around those paths
+- further reduction of legacy replication-bounty push-release reliance, or a stronger
+  recipient-failure policy around that remaining path
 - broader invariant and fuzz coverage beyond the current targeted hardening tests
 - explicit threat models for resolver compromise, checkpoint compromise, and malicious operator
   inactivity

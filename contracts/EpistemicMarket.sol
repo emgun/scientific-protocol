@@ -106,6 +106,12 @@ contract EpistemicMarket is DepositPausable, ReentrancyGuard, IEpistemicMarket {
         uint256 payoutAmount,
         address indexed actor
     );
+    event ForecastForfeited(
+        uint256 indexed forecastId,
+        address indexed forecaster,
+        uint256 forfeitedAmount,
+        address indexed actor
+    );
     event ChallengeOpened(
         uint256 indexed challengeId,
         uint256 indexed claimId,
@@ -343,6 +349,39 @@ contract EpistemicMarket is DepositPausable, ReentrancyGuard, IEpistemicMarket {
             finalStatus,
             matched,
             payoutAmount,
+            msg.sender
+        );
+    }
+
+    /// @notice Permissionlessly finalizes an unrevealed forecast after its reveal deadline.
+    /// @dev The full stake is moved into the reward pool. This terminal path deliberately does
+    /// not require a claim decision: a forecaster must reveal on time regardless of whether the
+    /// underlying claim has resolved, otherwise selective reveal would create a free option.
+    function forfeitUnrevealedForecast(uint256 forecastId) external {
+        ForecastCommitment storage forecast = _forecasts[forecastId];
+        if (forecast.forecastId == 0) {
+            revert EpistemicMarketUnknownForecast(forecastId);
+        }
+        if (forecast.settled) {
+            revert EpistemicMarketAlreadySettled(forecastId);
+        }
+        if (forecast.revealed) {
+            revert EpistemicMarketAlreadyRevealed(forecastId);
+        }
+        if (block.timestamp <= forecast.revealDeadline) {
+            revert EpistemicMarketRevealWindowOpen(forecastId);
+        }
+
+        forecast.settled = true;
+        rewardPoolBalance += forecast.stakeAmount;
+
+        emit ForecastForfeited(forecastId, forecast.forecaster, forecast.stakeAmount, msg.sender);
+        emit ForecastSettled(
+            forecastId,
+            0,
+            ProtocolTypes.ResolutionStatus.Pending,
+            false,
+            0,
             msg.sender
         );
     }

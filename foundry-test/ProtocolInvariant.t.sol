@@ -23,6 +23,8 @@ contract EscrowHandler is Test {
     mapping(uint256 => bool) internal releasedReservation;
     mapping(uint256 => bool) internal cancelledReservation;
     uint256 internal releasedTotal;
+    uint256 internal slashedTotal;
+    uint256 internal withdrawnRefundTotal;
 
     constructor(
         address admin_,
@@ -148,6 +150,7 @@ contract EscrowHandler is Test {
         uint256 amount = STEP * bound(amountSeed, 1, available / STEP);
         vm.prank(admin);
         bondEscrow.slashAuthorBond(claimId, amount);
+        slashedTotal += amount;
     }
 
     function refundAuthorBond(uint256 amountSeed) external {
@@ -158,6 +161,17 @@ contract EscrowHandler is Test {
         uint256 amount = STEP * bound(amountSeed, 1, available / STEP);
         vm.prank(admin);
         bondEscrow.refundAuthorBond(claimId, amount);
+    }
+
+    function withdrawAuthorRefund(uint256 amountSeed) external {
+        uint256 available = bondEscrow.authorRefundCredits(author);
+        if (available < STEP) {
+            return;
+        }
+        uint256 amount = STEP * bound(amountSeed, 1, available / STEP);
+        vm.prank(author);
+        bondEscrow.withdrawAuthorBondRefund(amount, payable(author));
+        withdrawnRefundTotal += amount;
     }
 
     function progressClaimStatus(uint8 choice) external {
@@ -180,6 +194,14 @@ contract EscrowHandler is Test {
     function invariantReleasedTotal() external view returns (uint256) {
         return releasedTotal;
     }
+
+    function invariantSlashedTotal() external view returns (uint256) {
+        return slashedTotal;
+    }
+
+    function invariantWithdrawnRefundTotal() external view returns (uint256) {
+        return withdrawnRefundTotal;
+    }
 }
 
 interface BondEscrowLike {
@@ -193,12 +215,14 @@ interface BondEscrowLike {
     function bountyBalances(uint256 claimId) external view returns (uint256);
     function reservedBountyBalances(uint256 claimId) external view returns (uint256);
     function authorBondBalances(uint256 claimId) external view returns (uint256);
+    function authorRefundCredits(address author) external view returns (uint256);
     function slashRecipient() external view returns (address);
     function reserveBountyPayout(uint256 claimId, uint256 replicationId, uint256 amount) external;
     function releaseReservedPayout(uint256 claimId, uint256 replicationId) external;
     function cancelReservedPayout(uint256 claimId, uint256 replicationId) external;
     function slashAuthorBond(uint256 claimId, uint256 amount) external;
     function refundAuthorBond(uint256 claimId, uint256 amount) external;
+    function withdrawAuthorBondRefund(uint256 amount, address payable recipient) external;
     function getReservation(
         uint256 claimId,
         uint256 replicationId
@@ -329,6 +353,16 @@ contract ProtocolInvariantTest is StdInvariant, ProtocolDeployer {
 
     function invariant_AuthorBondNeverExceedsInitialDeposit() public view {
         assertLe(bondEscrow.authorBondBalances(claimId), initialAuthorBond);
+    }
+
+    function invariant_AuthorBondAccountingConservesFunds() public view {
+        assertEq(
+            bondEscrow.authorBondBalances(claimId) +
+                bondEscrow.authorRefundCredits(author) +
+                handler.invariantSlashedTotal() +
+                handler.invariantWithdrawnRefundTotal(),
+            initialAuthorBond
+        );
     }
 
     function invariant_ClaimAndReplicationIdsRemainMonotonic() public view {
