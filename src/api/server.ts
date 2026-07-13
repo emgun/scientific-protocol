@@ -270,6 +270,14 @@ export async function createApiServer(options: ApiServerOptions = {}): Promise<A
         return;
       }
 
+      if (
+        error instanceof Error &&
+        error.message === "public_write_request_reconciliation_mismatch"
+      ) {
+        json(response, 409, { error: "public_write_request_reconciliation_mismatch" });
+        return;
+      }
+
       if (error instanceof Error && error.message === "rate_limit_store_unavailable") {
         json(response, 503, { error: "rate_limit_store_unavailable" });
         return;

@@ -53,16 +53,53 @@ export async function handleSourceWriteRoutes(context: RouteContext): Promise<bo
       allowRecordedReplayActionTypes: ["source_submit"],
       chainId: writeConfig.chainId,
     });
-    const requestLeaseRequired = authenticated.envelope.actionType === "source_submit";
     const recordedRequest = authenticated.recordedReplay
       ? await dependencies.readPublicWriteRequestByHash(pool, authenticated.requestHash)
       : undefined;
+    const payload = authenticated.envelope.payload;
+    let draftInput: ReturnType<typeof parseArtifactDraftPayload>;
+    try {
+      draftInput = parseArtifactDraftPayload(payload);
+    } catch (error) {
+      if (recordedRequest?.status !== "accepted") {
+        await dependencies.markPublicWriteRequestRejected(
+          pool,
+          authenticated.acceptedRequestId,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+      throw error;
+    }
+    const canonical = url.pathname === "/sources" ? canonicalizeSourceDraft(draftInput) : null;
+    let acceptedReplay = false;
+    if (recordedRequest?.status === "accepted") {
+      const recordedSourceId = recordedRequest.outcomeDetail?.match(/^source:(\d+)$/u)?.[1];
+      const [recordedSource, recordedSubmission] = await Promise.all([
+        recordedSourceId ? dependencies.readSourceRecord(pool, recordedSourceId) : undefined,
+        dependencies.readSourceSubmissionRecordByRequestHash(pool, authenticated.requestHash),
+      ]);
+      if (
+        authenticated.envelope.actionType !== "source_submit" ||
+        !canonical ||
+        !recordedSourceId ||
+        !recordedSource ||
+        recordedSource.canonicalSourceKey !== canonical.canonicalSourceKey ||
+        !recordedSubmission ||
+        recordedSubmission.requestHash?.toLowerCase() !== authenticated.requestHash.toLowerCase() ||
+        recordedSubmission.sourceId !== recordedSourceId ||
+        recordedSubmission.canonicalSourceKey !== canonical.canonicalSourceKey
+      ) {
+        throw new Error("public_write_request_reconciliation_mismatch");
+      }
+      acceptedReplay = true;
+    }
+    const requestLeaseRequired =
+      authenticated.envelope.actionType === "source_submit" && !acceptedReplay;
     const leaseOwner = randomUUID();
     const leaseMs = 5 * 60 * 1000;
     let heartbeat: NodeJS.Timeout | null = null;
     let heartbeatError: Error | null = null;
     let heartbeatRunning = false;
-    let acceptedReplay = false;
     const renewLease = async () => {
       if (!requestLeaseRequired) return;
       if (heartbeatError) throw heartbeatError;
@@ -97,18 +134,7 @@ export async function handleSourceWriteRoutes(context: RouteContext): Promise<bo
       heartbeat.unref();
     }
     try {
-      const payload = authenticated.envelope.payload;
-      const draftInput = parseArtifactDraftPayload(payload);
-      if (url.pathname === "/sources") {
-        const canonical = canonicalizeSourceDraft(draftInput);
-        const recordedSourceId = recordedRequest?.outcomeDetail?.match(/^source:(\d+)$/u)?.[1];
-        const recordedSource = recordedSourceId
-          ? await dependencies.readSourceRecord(pool, recordedSourceId)
-          : undefined;
-        acceptedReplay =
-          authenticated.recordedReplay &&
-          recordedRequest?.status === "accepted" &&
-          recordedSource?.canonicalSourceKey === canonical.canonicalSourceKey;
+      if (url.pathname === "/sources" && canonical) {
         if (!acceptedReplay) {
           for (const [dimension, bucketKey] of [
             [
@@ -173,17 +199,22 @@ export async function handleSourceWriteRoutes(context: RouteContext): Promise<bo
         }
       }
       await renewLease();
-      const result = await dependencies.createProductionArtifactDraft(
-        draftInput,
-        authenticated.envelope.actorAddress,
-        pool,
-        {
-          requestHash:
-            authenticated.envelope.actionType === "source_submit"
-              ? authenticated.requestHash
-              : null,
-        },
-      );
+      const result = acceptedReplay
+        ? await dependencies.reconstructSourceSubmission(pool, draftInput, {
+            requestHash: authenticated.requestHash,
+            submittedByActor: authenticated.envelope.actorAddress,
+          })
+        : await dependencies.createProductionArtifactDraft(
+            draftInput,
+            authenticated.envelope.actorAddress,
+            pool,
+            {
+              requestHash:
+                authenticated.envelope.actionType === "source_submit"
+                  ? authenticated.requestHash
+                  : null,
+            },
+          );
       await renewLease();
       if (!acceptedReplay) {
         await dependencies.markPublicWriteRequestAccepted(
@@ -198,15 +229,17 @@ export async function handleSourceWriteRoutes(context: RouteContext): Promise<bo
         result,
       });
     } catch (error) {
-      const canUpdateRequest = requestLeaseRequired
-        ? await dependencies
-            .assertPublicWriteRequestExecution(pool, {
-              leaseOwner,
-              requestId: authenticated.acceptedRequestId,
-            })
-            .then(() => true)
-            .catch(() => false)
-        : true;
+      const canUpdateRequest = acceptedReplay
+        ? false
+        : requestLeaseRequired
+          ? await dependencies
+              .assertPublicWriteRequestExecution(pool, {
+                leaseOwner,
+                requestId: authenticated.acceptedRequestId,
+              })
+              .then(() => true)
+              .catch(() => false)
+          : true;
       if (canUpdateRequest) {
         await dependencies.markPublicWriteRequestRejected(
           pool,

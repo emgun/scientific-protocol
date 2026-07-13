@@ -103,7 +103,7 @@ export async function markPublicWriteRequestAccepted(
         status = 'accepted',
         outcome_detail = $2,
         updated_at = NOW()
-      WHERE request_id = $1
+      WHERE request_id = $1 AND status <> 'accepted'
     `,
     [requestId, outcomeDetail ?? null],
   );

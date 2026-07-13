@@ -5101,13 +5101,26 @@ describe("ApiServer", () => {
     let recorded: PublicWriteRequestView | undefined;
     let acceptanceWrites = 0;
     let reconstructionCalls = 0;
+    let ingestCalls = 0;
     const { baseUrl, close } = await startServer({
       readPublicWriteRequestByHash: async () => recorded,
       readSourceRecord: async (_pool, sourceId) =>
         sourceId === "7"
           ? ({ canonicalSourceKey: "url:https://example.com/stable.pdf" } as never)
           : undefined,
+      readSourceSubmissionRecordByRequestHash: async () =>
+        recorded
+          ? ({
+              canonicalSourceKey: "url:https://example.com/stable.pdf",
+              requestHash: recorded.requestHash,
+              sourceId: "7",
+            } as never)
+          : undefined,
       createProductionArtifactDraft: async () => {
+        ingestCalls += 1;
+        throw new Error("accepted replay must not ingest");
+      },
+      reconstructSourceSubmission: async () => {
         reconstructionCalls += 1;
         return { source: { sourceId: "7" }, submissionOutcome: "created" } as never;
       },
@@ -5147,11 +5160,101 @@ describe("ApiServer", () => {
       expect((await submit()).status).to.equal(200);
       expect((await submit()).status).to.equal(200);
       expect(reconstructionCalls).to.equal(2);
+      expect(ingestCalls).to.equal(0);
       expect(acceptanceWrites).to.equal(0);
       expect(recorded.updatedAt).to.equal("2026-07-12T00:00:01.000Z");
       expect(recorded.outcomeDetail).to.equal("source:7");
     } finally {
       await close();
+    }
+  });
+
+  it("fails corrupt accepted source replays closed before leases, quotas, or writes", async () => {
+    for (const scenario of [
+      "missing-source",
+      "mismatched-source",
+      "missing-submission",
+      "bad-outcome",
+    ] as const) {
+      const wallet = Wallet.createRandom();
+      let recorded: PublicWriteRequestView | undefined;
+      let mutationCalls = 0;
+      const { baseUrl, close } = await startServer({
+        readPublicWriteRequestByHash: async () => recorded,
+        readSourceRecord: async () =>
+          scenario === "missing-source"
+            ? undefined
+            : ({
+                canonicalSourceKey:
+                  scenario === "mismatched-source"
+                    ? "url:https://example.com/other.pdf"
+                    : "url:https://example.com/stable.pdf",
+              } as never),
+        readSourceSubmissionRecordByRequestHash: async () =>
+          scenario === "missing-submission" || !recorded
+            ? undefined
+            : ({
+                canonicalSourceKey: "url:https://example.com/stable.pdf",
+                requestHash: recorded.requestHash,
+                sourceId: "7",
+              } as never),
+        reservePublicWriteRequestExecution: async () => {
+          mutationCalls += 1;
+          return true;
+        },
+        createProductionArtifactDraft: async () => {
+          mutationCalls += 1;
+          throw new Error("must not ingest");
+        },
+        reconstructSourceSubmission: async () => {
+          mutationCalls += 1;
+          throw new Error("must not reconstruct corrupt state");
+        },
+        markPublicWriteRequestAccepted: async () => {
+          mutationCalls += 1;
+          if (!recorded) throw new Error("missing request");
+          return recorded;
+        },
+        markPublicWriteRequestRejected: async () => {
+          mutationCalls += 1;
+          if (!recorded) throw new Error("missing request");
+          return recorded;
+        },
+      });
+      try {
+        const signed = await buildSignedPublicWriteBody(wallet, {
+          actionType: "source_submit",
+          actorAddress: wallet.address,
+          chainId: 31337,
+          issuedAt: new Date().toISOString(),
+          payload: { sourceType: "url", sourceUrl: "https://example.com/stable.pdf" },
+          requestNonce: `source-corrupt-${scenario}`,
+          scopeKey: `submit:${wallet.address.toLowerCase()}`,
+        });
+        recorded = {
+          ...signed.envelope,
+          actionType: "source_submit",
+          createdAt: "2026-07-12T00:00:00.000Z",
+          outcomeDetail: scenario === "bad-outcome" ? "corrupt" : "source:7",
+          requestHash: hashPublicWriteEnvelope(signed.envelope),
+          requestId: "91",
+          signature: signed.signature,
+          status: "accepted",
+          updatedAt: "2026-07-12T00:00:01.000Z",
+        };
+        const response = await fetch(`${baseUrl}/sources`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(signed),
+        });
+        expect(response.status, scenario).to.equal(409);
+        expect(await response.json()).to.deep.equal({
+          error: "public_write_request_reconciliation_mismatch",
+        });
+        expect(mutationCalls, scenario).to.equal(0);
+      } finally {
+        await close();
+      }
     }
   });
 

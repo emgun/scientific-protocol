@@ -361,6 +361,27 @@ export async function ingestSource(
   return txResult.result;
 }
 
+export async function reconstructSourceSubmission(
+  pool: Pool,
+  input: ArtifactDraftInput,
+  options: Pick<SourceIngestOptions, "requestHash" | "submittedByActor">,
+): Promise<SourceIngestionResult> {
+  if (!options.requestHash) throw new Error("source_submission_request_hash_required");
+  const { locator, ref } = sourceLocatorForInput(input);
+  const canonical = canonicalizeSourceLocator({
+    locator,
+    ref,
+    sourceType: input.sourceType as SourceType,
+  });
+  const existing = await readSourceByCanonicalKey(pool, canonical.canonicalSourceKey);
+  if (!existing) throw new Error("public_write_request_reconciliation_mismatch");
+  return replayDuplicateSourceSubmission(pool, input, canonical, existing, {
+    discoveryMode: "user_submitted",
+    requestHash: options.requestHash,
+    submittedByActor: options.submittedByActor,
+  });
+}
+
 async function replayDuplicateSourceSubmission(
   queryable: SourceQueryable,
   input: ArtifactDraftInput,

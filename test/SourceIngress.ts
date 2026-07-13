@@ -1002,6 +1002,7 @@ describe("source ingress", { skip: database.skipReason }, () => {
         }),
       ).to.equal(false);
       await markPublicWriteRequestAccepted(pool, request.requestId, "claim:7:published");
+      await markPublicWriteRequestAccepted(pool, request.requestId, "claim:999:must-not-overwrite");
       await markPublicWriteRequestPending(pool, request.requestId, "late_worker_pending");
       await markPublicWriteRequestRejected(pool, request.requestId, "late_worker_rejected");
       const accepted = await readPublicWriteRequest(pool, request.requestId);

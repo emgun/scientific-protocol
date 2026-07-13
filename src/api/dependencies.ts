@@ -133,13 +133,14 @@ import {
   confirmSourcePublication,
   rejectSourcePublication,
 } from "../sources/manual-publication.js";
-import { ingestSource } from "../sources/service.js";
+import { ingestSource, reconstructSourceSubmission } from "../sources/service.js";
 import {
   readSourceByCanonicalKey,
   readSourceExtractionCandidates,
   readSourceExtractionCandidatesForSources,
   readSourcePublicationDecisionsPage,
   readSourceRecord,
+  readSourceSubmissionRecordByRequestHash,
   readSourceSubmissionRecordsPage,
   readSourcesPage,
   upsertSourceRecord,
@@ -163,6 +164,7 @@ export type ApiDependencies = {
   createProductionClaim: typeof createProductionClaim;
   publishProductionClaim: typeof publishProductionClaim;
   ingestSource: typeof ingestSource;
+  reconstructSourceSubmission: typeof reconstructSourceSubmission;
   createDemoArtifactDraft: typeof createDemoArtifactDraft;
   createArtifactMaintenanceTask: typeof createArtifactMaintenanceTask;
   createAgentWebhookSubscription: typeof createAgentWebhookSubscription;
@@ -270,6 +272,7 @@ export type ApiDependencies = {
   readSourceByCanonicalKey: typeof readSourceByCanonicalKey;
   readSourcePublicationDecisionsPage: typeof readSourcePublicationDecisionsPage;
   readSourceRecord: typeof readSourceRecord;
+  readSourceSubmissionRecordByRequestHash: typeof readSourceSubmissionRecordByRequestHash;
   readSourceSubmissionRecordsPage: typeof readSourceSubmissionRecordsPage;
   readSourcesPage: typeof readSourcesPage;
   readResolutionRun: typeof readResolutionRun;
@@ -331,6 +334,7 @@ export const defaultDependencies: ApiDependencies = {
   createProductionArtifactDraft,
   createProductionClaim,
   ingestSource,
+  reconstructSourceSubmission,
   createDemoArtifactDraft,
   createArtifactMaintenanceTask,
   createAgentWebhookSubscription,
@@ -439,6 +443,7 @@ export const defaultDependencies: ApiDependencies = {
   readSourceByCanonicalKey,
   readSourcePublicationDecisionsPage,
   readSourceRecord,
+  readSourceSubmissionRecordByRequestHash,
   readSourceSubmissionRecordsPage,
   readSourcesPage,
   readResolutionRun,
