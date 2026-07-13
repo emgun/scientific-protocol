@@ -83,3 +83,36 @@ jobs:
 
       - name: Gas snapshot check
         run: npm run gas:check
+
+  container-smoke:
+    name: Reference service container smoke
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Build candidate image
+        run: docker build --tag scientific-protocol-service:pr .
+
+      - name: Check CLI
+        run: |
+          docker run --rm scientific-protocol-service:pr version
+          docker run --rm scientific-protocol-service:pr help
+
+      - name: Check runtime health
+        run: |
+          container_id="$(docker run --detach --publish 127.0.0.1:3000:3000 \
+            --env SP_API_MODE=read-model-optional \
+            --env SP_PUBLIC_SERVICE=true \
+            --env SP_RPC_URL=http://127.0.0.1:8545 \
+            scientific-protocol-service:pr)"
+          trap 'docker logs "$container_id"; docker rm --force "$container_id"' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:3000/livez >/dev/null && \
+               curl --fail --silent http://127.0.0.1:3000/readyz >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          exit 1

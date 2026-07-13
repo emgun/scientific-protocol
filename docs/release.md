@@ -43,9 +43,11 @@ PyPI API token.
 The workflow refuses to publish if the tag does not match `package.json` or if the package version
 already exists on npm.
 
-The same `vX.Y.Z` tag triggers `release-container.yml`. It publishes immutable version and commit
-tags to `ghcr.io/emgun/scientific-protocol-service`, generates an SBOM and registry provenance, and
-attests the resulting digest. It does not publish `latest`.
+The `Release` workflow publishes npm first, then immutable version and checked-out-commit image tags
+to `ghcr.io/emgun/scientific-protocol-service`, attests the image, and creates the GitHub Release.
+Container publication cannot run if npm validation or publication fails. It does not publish
+`latest`. If a downstream job fails after npm succeeds, use GitHub's **re-run failed jobs** action;
+a fresh dispatch correctly rejects an already-published npm version.
 
 For the prepared breaking release, the exact next release action after review and merge is:
 
