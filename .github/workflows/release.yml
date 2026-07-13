@@ -69,8 +69,10 @@ jobs:
         run: npm ci
 
       - name: Validate tag and package metadata
+        env:
+          RELEASE_REF: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          release_ref="${{ github.event.inputs.tag || github.ref_name }}"
+          release_ref="$RELEASE_REF"
           package_name="$(node -p "require('./package.json').name")"
           package_version="$(node -p "require('./package.json').version")"
           tag_version="${release_ref#v}"
@@ -145,8 +147,10 @@ jobs:
       - name: Resolve immutable image metadata
         id: release
         shell: bash
+        env:
+          RELEASE_REF: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          release_ref="${{ github.event.inputs.tag || github.ref_name }}"
+          release_ref="$RELEASE_REF"
           package_version="$(node -p "require('./package.json').version")"
           test "$release_ref" = "v$package_version"
           revision="$(git rev-parse HEAD)"
