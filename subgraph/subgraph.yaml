@@ -28,6 +28,8 @@ dataSources:
           handler: handleClaimStatusUpdated
         - event: ResolutionDecisionRecorded(indexed uint256,indexed uint256,indexed uint256,address,uint8,uint8,uint16,bytes32,bytes32,uint8,address)
           handler: handleResolutionDecisionRecorded
+        - event: EffectiveResolutionDecisionUpdated(indexed uint256,indexed uint256,indexed uint8,address)
+          handler: handleEffectiveResolutionDecisionUpdated
       file: ./src/claim-registry.ts
   - kind: ethereum/contract
     name: ArtifactRegistry

@@ -10,7 +10,8 @@ CREATE TABLE IF NOT EXISTS resolution_decisions (
   evidence_hash TEXT NOT NULL,
   resolver_type INTEGER NOT NULL,
   created_at NUMERIC NOT NULL,
-  actor TEXT NOT NULL
+  actor TEXT NOT NULL,
+  effective BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 ALTER TABLE forecasts ADD COLUMN IF NOT EXISTS resolution_decision_id TEXT;
@@ -21,3 +22,7 @@ ALTER TABLE forecasts
 
 CREATE INDEX IF NOT EXISTS resolution_decisions_claim_id_idx
   ON resolution_decisions (claim_id, CAST(decision_id AS NUMERIC));
+
+CREATE UNIQUE INDEX IF NOT EXISTS resolution_decisions_one_effective_per_claim_idx
+  ON resolution_decisions (claim_id)
+  WHERE effective;

@@ -38,6 +38,7 @@ export async function validateSubgraph(env: NodeJS.ProcessEnv = process.env): Pr
     "handleArtifactAdded",
     "handleReplicationSubmitted",
     "handleResolutionDecisionRecorded",
+    "handleEffectiveResolutionDecisionUpdated",
     "handleReputationCheckpointPublished",
     "handleAgentRegistered",
     "handleProposalCreated",

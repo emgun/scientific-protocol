@@ -247,7 +247,7 @@ contract EpistemicMarket is DepositPausable, ReentrancyGuard, IEpistemicMarket {
         emit ForecastRevealed(forecastId, direction, confidenceBps, msg.sender);
     }
 
-    /// @notice Settles a forecast against the claim's latest canonical resolution decision.
+    /// @notice Settles a forecast against the decision that established claim resolution state.
     /// @dev The market settler chooses when to settle but cannot supply independent outcome,
     /// fraud, or confidence state.
     /// An unrevealed forecast can only be settled after its reveal window closes, and it always
@@ -267,15 +267,17 @@ contract EpistemicMarket is DepositPausable, ReentrancyGuard, IEpistemicMarket {
         if (!forecast.revealed && block.timestamp <= forecast.revealDeadline) {
             revert EpistemicMarketRevealWindowOpen(forecastId);
         }
-        uint256 latestDecisionId = claimRegistry.getLatestResolutionDecisionId(forecast.claimId);
-        if (latestDecisionId == 0) {
+        uint256 effectiveDecisionId = claimRegistry.getEffectiveResolutionDecisionId(
+            forecast.claimId
+        );
+        if (effectiveDecisionId == 0) {
             revert EpistemicMarketUnknownResolutionDecision(resolutionDecisionId);
         }
-        if (resolutionDecisionId != latestDecisionId) {
+        if (resolutionDecisionId != effectiveDecisionId) {
             revert EpistemicMarketStaleResolutionDecision(
                 forecast.claimId,
                 resolutionDecisionId,
-                latestDecisionId
+                effectiveDecisionId
             );
         }
         ProtocolTypes.ResolutionDecision memory decision = claimRegistry.getResolutionDecision(

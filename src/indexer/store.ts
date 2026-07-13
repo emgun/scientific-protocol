@@ -909,6 +909,23 @@ export async function insertResolutionDecision(
   );
 }
 
+export async function markEffectiveResolutionDecision(
+  client: PoolClient,
+  claimId: string,
+  decisionId: string,
+): Promise<void> {
+  await client.query("UPDATE resolution_decisions SET effective = FALSE WHERE claim_id = $1", [
+    claimId,
+  ]);
+  const result = await client.query(
+    "UPDATE resolution_decisions SET effective = TRUE WHERE claim_id = $1 AND decision_id = $2",
+    [claimId, decisionId],
+  );
+  if (result.rowCount !== 1) {
+    throw new Error(`effective resolution decision ${decisionId} missing for claim ${claimId}`);
+  }
+}
+
 export async function applyForecastSettlement(
   client: PoolClient,
   forecastId: string,

@@ -9,6 +9,7 @@ type Claim @entity(immutable: false) {
   revisionOf: Claim
   createdAtBlock: BigInt!
   updatedAtBlock: BigInt!
+  effectiveResolutionDecision: ResolutionDecision
 }
 
 type Artifact @entity(immutable: true) {

@@ -2,6 +2,7 @@ import {
   ClaimCreated,
   ClaimRevised,
   ClaimStatusUpdated,
+  EffectiveResolutionDecisionUpdated,
   ResolutionDecisionRecorded,
 } from "../generated/ClaimRegistry/ClaimRegistry";
 import { Claim, ResolutionDecision } from "../generated/schema";
@@ -51,4 +52,15 @@ export function handleResolutionDecisionRecorded(event: ResolutionDecisionRecord
   decision.createdAtBlock = event.block.number;
   decision.createdAtTimestamp = event.block.timestamp;
   decision.save();
+}
+
+export function handleEffectiveResolutionDecisionUpdated(
+  event: EffectiveResolutionDecisionUpdated,
+): void {
+  const claim = Claim.load(event.params.claimId.toString());
+  const decision = ResolutionDecision.load(event.params.decisionId.toString());
+  if (claim === null || decision === null) return;
+  claim.effectiveResolutionDecision = decision.id;
+  claim.updatedAtBlock = event.block.number;
+  claim.save();
 }

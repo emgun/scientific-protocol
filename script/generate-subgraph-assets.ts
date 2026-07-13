@@ -23,6 +23,10 @@ const contracts = [
         "ResolutionDecisionRecorded(indexed uint256,indexed uint256,indexed uint256,address,uint8,uint8,uint16,bytes32,bytes32,uint8,address)",
         "handleResolutionDecisionRecorded",
       ],
+      [
+        "EffectiveResolutionDecisionUpdated(indexed uint256,indexed uint256,indexed uint8,address)",
+        "handleEffectiveResolutionDecisionUpdated",
+      ],
     ],
   },
   {

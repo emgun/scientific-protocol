@@ -43,6 +43,7 @@ contract ClaimRegistry is AccessManaged, IClaimRegistry {
     error ClaimRegistryReplicationDecisionExists(uint256 replicationId, uint256 decisionId);
     error ClaimRegistryUnknownResolutionDecision(uint256 decisionId);
     error ClaimRegistryInvalidResolutionStatus(ProtocolTypes.ResolutionStatus status);
+    error ClaimRegistryInvalidRequestHash();
 
     event ClaimCreated(
         uint256 indexed claimId,
@@ -81,6 +82,17 @@ contract ClaimRegistry is AccessManaged, IClaimRegistry {
         ProtocolTypes.ResolverType resolverType,
         address actor
     );
+    event EffectiveResolutionDecisionUpdated(
+        uint256 indexed claimId,
+        uint256 indexed decisionId,
+        ProtocolTypes.ClaimStatus indexed claimStatus,
+        address actor
+    );
+    event DelegatedClaimRequestRecorded(
+        bytes32 indexed requestHash,
+        uint256 indexed claimId,
+        address indexed author
+    );
 
     /// @notice Governance-set floor for `requiredAuthorBond` on new claims.
     /// @dev Defaults to zero until governance sets it through `ProtocolParameters`. The bond
@@ -96,7 +108,9 @@ contract ClaimRegistry is AccessManaged, IClaimRegistry {
     mapping(uint256 decisionId => ProtocolTypes.ResolutionDecision decision) private _decisions;
     mapping(uint256 claimId => uint256[] decisionIds) private _claimDecisionIds;
     mapping(uint256 claimId => uint256 decisionId) private _latestClaimDecisionId;
+    mapping(uint256 claimId => uint256 decisionId) private _effectiveClaimDecisionId;
     mapping(uint256 replicationId => uint256 decisionId) private _replicationDecisionId;
+    mapping(bytes32 requestHash => uint256 claimId) private _delegatedClaimRequestIds;
 
     IResolutionModuleRegistry public immutable resolutionModuleRegistry;
     IProtocolParameters public immutable protocolParameters;
@@ -151,6 +165,28 @@ contract ClaimRegistry is AccessManaged, IClaimRegistry {
     ) external onlyRole(ProtocolRoles.CLAIM_SUBMITTER_ROLE) returns (uint256 claimId) {
         _requireNonzeroClaimAuthor(summary.author);
         claimId = _createClaim(summary, authorBondAmount, 0, resolutionModule);
+    }
+
+    /// @notice Idempotently creates a delegated claim bound to one signed request commitment.
+    /// @dev A repeated request hash returns the original claim id and can never create a second
+    /// claim, even if separate service workers race or retry outside an event-query horizon.
+    function createClaimOnBehalfWithRequestHash(
+        ProtocolTypes.ClaimSummary calldata summary,
+        uint256 authorBondAmount,
+        address resolutionModule,
+        bytes32 requestHash
+    ) external onlyRole(ProtocolRoles.CLAIM_SUBMITTER_ROLE) returns (uint256 claimId) {
+        _requireNonzeroClaimAuthor(summary.author);
+        if (requestHash == bytes32(0)) {
+            revert ClaimRegistryInvalidRequestHash();
+        }
+        claimId = _delegatedClaimRequestIds[requestHash];
+        if (claimId != 0) {
+            return claimId;
+        }
+        claimId = _createClaim(summary, authorBondAmount, 0, resolutionModule);
+        _delegatedClaimRequestIds[requestHash] = claimId;
+        emit DelegatedClaimRequestRecorded(requestHash, claimId, summary.author);
     }
 
     /// @notice Revises a claim by creating a new immutable record linked to the prior version.
@@ -262,9 +298,18 @@ contract ClaimRegistry is AccessManaged, IClaimRegistry {
         // Every resolved replication remains recordable. Claim state advances only when the
         // derived status is a valid forward transition; a later or weaker replication must not
         // erase a stronger/terminal state merely because it was finalized later.
+        bool becameEffective;
         if (decisionStatus != oldStatus && _isAllowedTransition(oldStatus, decisionStatus)) {
             claimRecord.status = decisionStatus;
+            _effectiveClaimDecisionId[claimId] = decisionId;
+            becameEffective = true;
             emit ClaimStatusUpdated(claimId, oldStatus, decisionStatus, msg.sender);
+        } else if (decisionStatus == oldStatus && _effectiveClaimDecisionId[claimId] == 0) {
+            // The first decision may confirm a manually entered nonterminal state (most commonly
+            // UnderReplication + Inconclusive). It establishes a settlement pointer without
+            // fabricating a status transition. Later same-status evidence remains non-effective.
+            _effectiveClaimDecisionId[claimId] = decisionId;
+            becameEffective = true;
         }
         emit ResolutionDecisionRecorded(
             decisionId,
@@ -279,6 +324,14 @@ contract ClaimRegistry is AccessManaged, IClaimRegistry {
             replication.resolverType,
             msg.sender
         );
+        if (becameEffective) {
+            emit EffectiveResolutionDecisionUpdated(
+                claimId,
+                decisionId,
+                decisionStatus,
+                msg.sender
+            );
+        }
     }
 
     function claimExists(uint256 claimId) external view override returns (bool) {
@@ -317,6 +370,19 @@ contract ClaimRegistry is AccessManaged, IClaimRegistry {
         uint256 claimId
     ) external view override returns (uint256) {
         return _latestClaimDecisionId[claimId];
+    }
+
+    /// @notice Returns the latest decision that actually established the claim's resolution state.
+    /// @dev This deliberately differs from `getLatestResolutionDecisionId`, which is only the
+    /// append-only evidence tail and may point at a weaker or incompatible later observation.
+    function getEffectiveResolutionDecisionId(
+        uint256 claimId
+    ) external view override returns (uint256) {
+        return _effectiveClaimDecisionId[claimId];
+    }
+
+    function getDelegatedClaimIdByRequestHash(bytes32 requestHash) external view returns (uint256) {
+        return _delegatedClaimRequestIds[requestHash];
     }
 
     function getClaimResolutionDecisionIds(

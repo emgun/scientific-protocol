@@ -95,6 +95,7 @@ export type ResolutionDecisionView = {
   resolverType: number;
   createdAt: string;
   actor: string;
+  effective: boolean;
 };
 
 export type ChallengeView = {

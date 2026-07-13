@@ -38,6 +38,7 @@ import {
   insertArtifact,
   insertCheckpoint,
   insertResolutionDecision,
+  markEffectiveResolutionDecision,
   markSyncFailed,
   markSyncStarted,
   markSyncSucceeded,
@@ -83,6 +84,7 @@ type ChunkEvents = {
   claimCreatedEvents: EventLog[];
   claimStatusEvents: EventLog[];
   resolutionDecisionEvents: EventLog[];
+  effectiveResolutionDecisionEvents: EventLog[];
   artifactEvents: EventLog[];
   replicationSubmittedEvents: EventLog[];
   replicationResolvedEvents: EventLog[];
@@ -400,6 +402,12 @@ async function fetchChunkEvents(
         toBlock,
       ),
     () =>
+      contracts.claimRegistry.queryFilter(
+        contracts.claimRegistry.filters.EffectiveResolutionDecisionUpdated(),
+        fromBlock,
+        toBlock,
+      ),
+    () =>
       contracts.artifactRegistry.queryFilter(
         contracts.artifactRegistry.filters.ArtifactAdded(),
         fromBlock,
@@ -536,6 +544,7 @@ async function fetchChunkEvents(
     claimCreatedEvents,
     claimStatusEvents,
     resolutionDecisionEvents,
+    effectiveResolutionDecisionEvents,
     artifactEvents,
     replicationSubmittedEvents,
     replicationResolvedEvents,
@@ -563,6 +572,7 @@ async function fetchChunkEvents(
     claimCreatedEvents,
     claimStatusEvents,
     resolutionDecisionEvents,
+    effectiveResolutionDecisionEvents,
     artifactEvents,
     replicationSubmittedEvents,
     replicationResolvedEvents,
@@ -636,6 +646,7 @@ async function applyChunk(
         resolverType: Number(event.args.resolverType),
         createdAt: decision.createdAt.toString(),
         actor: event.args.actor,
+        effective: false,
       };
     }),
   );
@@ -846,6 +857,13 @@ async function applyChunk(
 
     for (const decision of resolutionDecisions) {
       await insertResolutionDecision(client, decision);
+    }
+    for (const event of events.effectiveResolutionDecisionEvents) {
+      await markEffectiveResolutionDecision(
+        client,
+        event.args.claimId.toString(),
+        event.args.decisionId.toString(),
+      );
     }
 
     for (const checkpoint of checkpoints) {

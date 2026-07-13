@@ -83,8 +83,13 @@ not the authority boundary.
   confidence, evidence, resolver type, module, replication, and claim linkage into an immutable
   `ResolutionDecision`; later decisions remain recordable even when they cannot validly rewrite a
   stronger or terminal claim state.
-- Forecast settlement consumes the claim's latest decision id and derives its outcome from that
-  record, eliminating the market settler's former independent status input.
+- The latest recorded decision is only the append-only evidence tail. A separate effective decision
+  pointer advances exclusively when a decision establishes new claim state. Forecast settlement
+  consumes that effective pointer, so later weaker evidence cannot reverse value settlement while
+  leaving claim state unchanged.
+- Delegated claim creation binds each signed request hash to one onchain claim id. Renewable service
+  leases fence stale workers before chain writes; the onchain mapping is the final duplicate barrier.
+- Outbound HTTP transport pins every redirect hop to the exact DNS addresses that passed validation.
 - An agent spend limit is a lifetime ceiling over consumed value plus live reservations. Releasing
   a reservation restores capacity, while consuming it permanently uses capacity. Raising the
   ceiling is an explicit operator action; it cannot be lowered below committed value.

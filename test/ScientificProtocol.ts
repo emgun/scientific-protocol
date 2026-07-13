@@ -426,6 +426,73 @@ describe("ClaimRegistry delegated submission", () => {
         ),
     );
   });
+
+  it("makes request-bound delegated creation idempotent onchain", async () => {
+    const protocol = await deployProtocol();
+    const requestHash = ethers.keccak256(ethers.toUtf8Bytes("signed-request-1"));
+    const summary = makeClaimSummary(protocol.author.address, 1n);
+    const requiredBond = ethers.parseEther("0.25");
+
+    assert.equal(await protocol.claimRegistry.getDelegatedClaimIdByRequestHash(requestHash), 0n);
+    const firstReceipt = await (
+      await protocol.claimRegistry
+        .connect(protocol.admin)
+        .createClaimOnBehalfWithRequestHash(summary, requiredBond, ethers.ZeroAddress, requestHash)
+    ).wait();
+    assert.equal(
+      firstReceipt?.logs.some((log) => {
+        try {
+          return (
+            protocol.claimRegistry.interface.parseLog(log)?.name === "DelegatedClaimRequestRecorded"
+          );
+        } catch {
+          return false;
+        }
+      }),
+      true,
+    );
+    assert.equal(await protocol.claimRegistry.getDelegatedClaimIdByRequestHash(requestHash), 1n);
+
+    const replayReceipt = await (
+      await protocol.claimRegistry
+        .connect(protocol.admin)
+        .createClaimOnBehalfWithRequestHash(summary, requiredBond, ethers.ZeroAddress, requestHash)
+    ).wait();
+    assert.equal(
+      replayReceipt?.logs.some((log) => {
+        try {
+          return protocol.claimRegistry.interface.parseLog(log)?.name === "ClaimCreated";
+        } catch {
+          return false;
+        }
+      }),
+      false,
+    );
+    assert.equal(await protocol.claimRegistry.nextClaimId(), 2n);
+    assert.equal(await protocol.claimRegistry.getDelegatedClaimIdByRequestHash(requestHash), 1n);
+    await assert.rejects(
+      protocol.claimRegistry
+        .connect(protocol.admin)
+        .createClaimOnBehalfWithRequestHash(
+          summary,
+          requiredBond,
+          ethers.ZeroAddress,
+          ethers.ZeroHash,
+        ),
+      /ClaimRegistryInvalidRequestHash/,
+    );
+    await assert.rejects(
+      protocol.claimRegistry
+        .connect(protocol.other)
+        .createClaimOnBehalfWithRequestHash(
+          summary,
+          requiredBond,
+          ethers.ZeroAddress,
+          ethers.keccak256(ethers.toUtf8Bytes("unauthorized-request")),
+        ),
+      /AccessManagedMissingRole/,
+    );
+  });
 });
 
 function makeClaimSummary(authorAddress: string, domainId: bigint) {
@@ -1580,6 +1647,18 @@ describe("ScientificProtocol", () => {
         }
       }),
     );
+    assert.ok(
+      firstReceipt?.logs.some((log) => {
+        try {
+          return (
+            protocol.claimRegistry.interface.parseLog(log)?.name ===
+            "EffectiveResolutionDecisionUpdated"
+          );
+        } catch {
+          return false;
+        }
+      }),
+    );
     const firstDecision = await protocol.claimRegistry.getResolutionDecision(1);
     assert.equal(firstDecision.claimId, 1n);
     assert.equal(firstDecision.replicationId, 1n);
@@ -1610,6 +1689,7 @@ describe("ScientificProtocol", () => {
     ).wait();
 
     assert.equal(await protocol.claimRegistry.getLatestResolutionDecisionId(1), 2n);
+    assert.equal(await protocol.claimRegistry.getEffectiveResolutionDecisionId(1), 2n);
     assert.deepEqual(Array.from(await protocol.claimRegistry.getClaimResolutionDecisionIds(1)), [
       1n,
       2n,
@@ -1626,7 +1706,81 @@ describe("ScientificProtocol", () => {
     );
     const thirdDecision = await protocol.claimRegistry.getResolutionDecision(thirdDecisionId);
     assert.equal(thirdDecision.claimStatus, BigInt(CLAIM_STATUS.ProvisionallySupported));
+    assert.equal(await protocol.claimRegistry.getLatestResolutionDecisionId(1), thirdDecisionId);
+    assert.equal(await protocol.claimRegistry.getEffectiveResolutionDecisionId(1), 2n);
     assert.equal((await protocol.claimRegistry.getClaim(1)).status, BigInt(CLAIM_STATUS.Refuted));
+  });
+
+  it("settles markets only against the decision that established current claim state", async () => {
+    const protocol = await deployProtocol();
+    await (
+      await protocol.claimRegistry
+        .connect(protocol.author)
+        .createClaim(
+          makeClaimSummary(protocol.author.address, 1n),
+          ethers.parseEther("0.25"),
+          ethers.ZeroAddress,
+        )
+    ).wait();
+    await satisfyBondAndPublishClaim(protocol, 1);
+    await (
+      await protocol.claimRegistry
+        .connect(protocol.admin)
+        .setClaimStatus(1, CLAIM_STATUS.UnderReplication)
+    ).wait();
+
+    const salt = ethers.keccak256(ethers.toUtf8Bytes("effective-decision-only"));
+    const commitmentHash = ethers.keccak256(
+      ethers.AbiCoder.defaultAbiCoder().encode(
+        ["uint8", "uint16", "bytes32"],
+        [FORECAST_DIRECTION.Refutes, 9_000, salt],
+      ),
+    );
+    const latestBlock = await ethers.provider.getBlock("latest");
+    assert.ok(latestBlock);
+    await (
+      await protocol.epistemicMarket
+        .connect(protocol.author)
+        .commitForecast(1, commitmentHash, BigInt(latestBlock.timestamp + 3600), 0, {
+          value: ethers.parseEther("0.1"),
+        })
+    ).wait();
+    await (
+      await protocol.epistemicMarket
+        .connect(protocol.author)
+        .revealForecast(1, FORECAST_DIRECTION.Refutes, 9_000, salt)
+    ).wait();
+
+    await createCanonicalResolutionDecision(protocol, 1, RESOLUTION_STATUS.Supported);
+    const refutedDecisionId = await createCanonicalResolutionDecision(
+      protocol,
+      1,
+      RESOLUTION_STATUS.Refuted,
+    );
+    const laterWeakerDecisionId = await createCanonicalResolutionDecision(
+      protocol,
+      1,
+      RESOLUTION_STATUS.Supported,
+    );
+    assert.equal(
+      await protocol.claimRegistry.getLatestResolutionDecisionId(1),
+      laterWeakerDecisionId,
+    );
+    assert.equal(
+      await protocol.claimRegistry.getEffectiveResolutionDecisionId(1),
+      refutedDecisionId,
+    );
+
+    await assert.rejects(
+      protocol.epistemicMarket.connect(protocol.admin).settleForecast(1, laterWeakerDecisionId),
+      /EpistemicMarketStaleResolutionDecision/,
+    );
+    await (
+      await protocol.epistemicMarket.connect(protocol.admin).settleForecast(1, refutedDecisionId)
+    ).wait();
+    const forecast = await protocol.epistemicMarket.getForecast(1);
+    assert.equal(forecast.settled, true);
+    assert.equal(forecast.resolutionDecisionId, refutedDecisionId);
   });
 
   it("maps every resolvable replication status to one canonical claim-status recommendation", async () => {

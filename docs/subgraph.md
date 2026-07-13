@@ -45,6 +45,9 @@ query ClaimEvidence($id: ID!) {
     status
     metadataHash
     resolutionModule
+    effectiveResolutionDecision {
+      id
+    }
   }
   resolutionDecisions(where: { claim: $id }, orderBy: createdAtBlock) {
     id
