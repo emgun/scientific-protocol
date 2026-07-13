@@ -14,7 +14,7 @@ All notable changes to the `scientific-protocol` package are documented here. Th
 - JSON Schemas in `schemas/` are versioned with the package. Additive, optional fields are patch
   changes; anything else is minor.
 
-## [0.3.0] — Unreleased
+## [0.3.0] — 2026-07-12
 
 - Separate latest-recorded and effective resolution-decision pointers. Markets settle only against
   the decision that established claim state; later incompatible evidence remains append-only.
@@ -35,6 +35,9 @@ All notable changes to the `scientific-protocol` package are documented here. Th
 
 - `BondEscrow` now takes the replication registry and immutable slash treasury as its third and
   fourth constructor arguments. `slashAuthorBond` and `refundAuthorBond` no longer accept recipients.
+- `refundAuthorBond` now credits `authorRefundCredits` instead of transferring value. The credited
+  author calls `withdrawAuthorBondRefund(amount, recipient)`; new credit and withdrawal events make
+  both steps independently indexable.
 - `reserveBountyPayout` derives the recipient from the named replication and removes the caller-
   supplied recipient argument. Reservations require a matching claim/replication pair, release
   requires a resolved replication, and `cancelReservedPayout` provides terminal cancellation.
@@ -50,6 +53,12 @@ All notable changes to the `scientific-protocol` package are documented here. Th
 - `EpistemicMarket.settleForecast` now accepts an effective claim `resolutionDecisionId`, not a
   caller-supplied resolution status. `ForecastCommitment` exposes the effective-decision snapshot;
   `ForecastSettled` exposes the strictly newer causal decision id.
+- `EpistemicMarket.forfeitUnrevealedForecast` permissionlessly finalizes expired unrevealed
+  forecasts without requiring a later claim decision and emits `ForecastForfeited` plus the
+  canonical no-decision `ForecastSettled` record.
+- Forecast and challenge payouts now accrue in `withdrawablePayouts`; beneficiaries call
+  `withdrawPayout(amount, recipient)`. The new payout-credit and withdrawal events replace
+  receiver-dependent transfers during terminal market transitions.
 
 These contracts are non-upgradeable. Existing deployments remain readable history but cannot be
 relabelled as 0.3.0. Operators must deploy the complete 0.3.0 contract set and update deployment
